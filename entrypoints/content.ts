@@ -57,6 +57,19 @@ export default defineContentScript({
         // The style element above is used by browsers without constructable stylesheets.
       }
       host.showModal();
+
+      const focusCommandInput = () => {
+        // `autofocus` inside an iframe does not always take focus away from an
+        // already-focused control in the host page. Focus the browsing context
+        // first, then ask the command-bar document to focus its input.
+        iframe.focus({ preventScroll: true });
+        iframe.contentWindow?.postMessage(
+          { type: 'arclet:command-bar-focus' },
+          new URL(browser.runtime.getURL('/')).origin,
+        );
+      };
+      iframe.addEventListener('load', focusCommandInput, { once: true });
+      focusCommandInput();
     };
 
     const toggle = () => {

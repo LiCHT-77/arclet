@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Command } from 'cmdk';
 import type { CommandBarMessage, CommandBarResults, CommandItem } from '@/utils/command-bar';
@@ -61,6 +61,7 @@ function ResultItem({ item, onSelect }: { item: CommandItem; onSelect: (item: Co
 }
 
 function App() {
+  const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<CommandBarResults>(emptyResults);
   const [selectedValue, setSelectedValue] = useState('');
@@ -97,6 +98,19 @@ function App() {
       selectableValues.includes(current) ? current : (selectableValues[0] ?? '')
     ));
   }, [selectableValues]);
+
+  useEffect(() => {
+    const focusInput = () => inputRef.current?.focus({ preventScroll: true });
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'arclet:command-bar-focus') focusInput();
+    };
+
+    // Focusing on mount handles the normal path. The parent sends the same
+    // request after the iframe has loaded to cover pages with an active input.
+    focusInput();
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -138,6 +152,7 @@ function App() {
         <div className="command-input-wrap">
           <span className="search-mark" aria-hidden="true">⌕</span>
           <Command.Input
+            ref={inputRef}
             autoFocus
             value={query}
             onValueChange={setQuery}

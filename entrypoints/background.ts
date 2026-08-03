@@ -72,6 +72,17 @@ async function openUrl(url: string) {
 }
 
 export default defineBackground(() => {
+  browser.commands.onCommand.addListener(async (command) => {
+    if (command !== 'toggle-command-bar') return;
+    const [activeTab] = await browser.tabs.query({ active: true, lastFocusedWindow: true });
+    if (activeTab?.id === undefined) return;
+    try {
+      await browser.tabs.sendMessage(activeTab.id, { type: 'command-bar:toggle' });
+    } catch {
+      // コンテンツスクリプトを注入できないブラウザ内部ページでは何もしない。
+    }
+  });
+
   browser.runtime.onMessage.addListener(async (message: CommandBarMessage) => {
     switch (message.type) {
       case 'command-bar:search': return search(message.query);

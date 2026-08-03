@@ -59,6 +59,10 @@ export default defineContentScript({
       host.showModal();
     };
 
+    const toggle = () => {
+      if (document.getElementById(hostId)) close(); else open();
+    };
+
     window.addEventListener('message', (event) => {
       const iframe = document.querySelector(`#${hostId} > iframe`) as HTMLIFrameElement | null;
       if (
@@ -68,13 +72,8 @@ export default defineContentScript({
       ) close();
     });
 
-    document.addEventListener('keydown', (event) => {
-      if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k') {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        if (document.getElementById(hostId)) close(); else open();
-      }
-    }, true);
-
+    browser.runtime.onMessage.addListener((message: unknown) => {
+      if ((message as { type?: string })?.type === 'command-bar:toggle') toggle();
+    });
   },
 });

@@ -65,15 +65,13 @@ function App() {
   const [results, setResults] = useState<CommandBarResults>(emptyResults);
   const [selectedValue, setSelectedValue] = useState('');
   const navigableUrl = useMemo(() => toNavigableUrl(query), [query]);
-  const resultItems = useMemo(
-    () => [...results.tabs, ...results.bookmarks, ...results.history],
-    [results],
-  );
   const selectableValues = useMemo(() => [
-    ...resultItems.map((item) => item.id),
+    ...results.tabs.map((item) => item.id),
+    ...results.bookmarks.map((item) => item.id),
     ...(navigableUrl ? [`url:${navigableUrl}`] : []),
     ...(query.trim() ? [`search:${query.trim()}`] : []),
-  ], [navigableUrl, query, resultItems]);
+    ...results.history.map((item) => item.id),
+  ], [navigableUrl, query, results]);
 
   const close = () => {
     window.parent.postMessage({ type: 'arclet:command-bar-close' }, '*');
@@ -149,7 +147,7 @@ function App() {
         </div>
         <Command.List>
           <Command.Empty>候補が見つかりません</Command.Empty>
-          {resultItems.map((item) => <ResultItem key={item.id} item={item} onSelect={selectItem} />)}
+          {[...results.tabs, ...results.bookmarks].map((item) => <ResultItem key={item.id} item={item} onSelect={selectItem} />)}
           {navigableUrl && (
             <Command.Item value={`url:${navigableUrl}`} onSelect={() => void run({ type: 'command-bar:open-url', url: navigableUrl })}>
               <Icon kind="url" /><span className="command-copy"><span className="command-title">{navigableUrl} を開く</span><span className="command-subtitle">新規タブまたは既存のタブへ移動</span></span>
@@ -160,6 +158,7 @@ function App() {
               <Icon kind="search" /><span className="command-copy"><span className="command-title">「{query.trim()}」を検索</span><span className="command-subtitle">ブラウザの既定検索エンジンを使用</span></span>
             </Command.Item>
           )}
+          {results.history.map((item) => <ResultItem key={item.id} item={item} onSelect={selectItem} />)}
         </Command.List>
         <footer><span><kbd>↑↓</kbd> 移動</span><span><kbd>↵</kbd> 開く</span></footer>
       </Command>

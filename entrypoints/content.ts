@@ -42,6 +42,10 @@ export default defineContentScript({
       applyImportantStyles(iframe, {
         background: 'transparent', border: '0', display: 'block', height: '100%',
         inset: '0', position: 'absolute', width: '100%',
+        // `prefers-color-scheme` in an iframe inherits the embedding page's
+        // `color-scheme`. Set the embedding context explicitly so sites such
+        // as Slack cannot force the command bar into their own light scheme.
+        'color-scheme': 'light dark',
       });
       host.append(iframe);
       host.addEventListener('cancel', (event) => {

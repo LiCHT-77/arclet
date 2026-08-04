@@ -1,11 +1,15 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Command } from 'cmdk';
 import { Bookmark, ExternalLink, Globe, History, PanelsTopLeft, Search } from 'lucide-react';
 import type { CommandBarMessage, CommandBarResults, CommandItem } from '@/utils/command-bar';
+import { COMMAND_BAR_WINDOW_WIDTH_SCALE } from '@/utils/window-layout';
 import './style.css';
 
 const emptyResults: CommandBarResults = { tabs: [], bookmarks: [], searchSuggestions: [], history: [] };
+const commandBarIframeScaleStyle = {
+  '--arclet-command-bar-width-scale': COMMAND_BAR_WINDOW_WIDTH_SCALE,
+} as CSSProperties;
 
 function toNavigableUrl(value: string): string | null {
   const input = value.trim();
@@ -185,7 +189,8 @@ function App() {
       onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}
     >
       <Command
-        className={`w-full overflow-hidden border border-slate-200 bg-white text-slate-800 shadow-2xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 ${isStandaloneWindow ? 'flex h-dvh max-w-none flex-col rounded-none shadow-none' : 'max-w-2xl rounded-xl'}`}
+        className={`max-w-none overflow-hidden border border-slate-200 bg-white text-slate-800 shadow-2xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 ${isStandaloneWindow ? 'flex h-dvh w-full flex-col rounded-none shadow-none' : 'w-[calc(100dvw*var(--arclet-command-bar-width-scale))] rounded-xl'}`}
+        style={isStandaloneWindow ? undefined : commandBarIframeScaleStyle}
         shouldFilter={false}
         label="Arclet command bar"
         value={selectedValue}

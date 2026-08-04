@@ -1,18 +1,18 @@
 import type { CommandBarMessage, CommandBarResults, CommandItem } from '@/utils/command-bar';
 import type { LittleArcMessage } from '@/utils/little-arc';
+import {
+  COMMAND_BAR_WINDOW_HEIGHT_SCALE,
+  COMMAND_BAR_WINDOW_WIDTH_SCALE,
+  LITTLE_ARC_WINDOW_HEIGHT_SCALE,
+  LITTLE_ARC_WINDOW_WIDTH_SCALE,
+} from '@/utils/window-layout';
 
 const MAX_RESULTS = 50;
 const MAX_SEARCH_SUGGESTIONS = 3;
 const MAX_HISTORY_RESULTS_PER_DOMAIN = 3;
 const HISTORY_SEARCH_MAX_RESULTS = MAX_RESULTS * MAX_HISTORY_RESULTS_PER_DOMAIN;
-const COMMAND_BAR_WINDOW_WIDTH_SCALE = 0.7;
-const COMMAND_BAR_WINDOW_HEIGHT_SCALE = 0.6;
-const COMMAND_BAR_FALLBACK_SIZE = { width: 960, height: 720 };
 const LITTLE_ARC_WINDOW_STORAGE_KEY = 'littleArcWindowId';
 const LITTLE_ARC_CONTEXT_MENU_ID = 'open-link-in-little-arc';
-const LITTLE_ARC_WINDOW_WIDTH_SCALE = 0.8;
-const LITTLE_ARC_WINDOW_HEIGHT_SCALE = 0.95;
-const LITTLE_ARC_FALLBACK_SIZE = { width: 960, height: 720 };
 
 let commandBarWindowId: number | undefined;
 let commandBarWindowBounds: { width: number; height: number; left?: number; top?: number } | undefined;
@@ -247,18 +247,23 @@ async function initialCommandBarWindowBounds() {
     browser.windows.getLastFocused().catch(() => undefined),
     browser.system.display.getInfo().catch(() => []),
   ]);
-  const sourceWidth = focusedWindow?.width ?? COMMAND_BAR_FALLBACK_SIZE.width;
-  const sourceHeight = focusedWindow?.height ?? COMMAND_BAR_FALLBACK_SIZE.height;
-  const sourceLeft = focusedWindow?.left ?? 0;
-  const sourceTop = focusedWindow?.top ?? 0;
-  const referenceX = sourceLeft + sourceWidth / 2;
-  const referenceY = sourceTop + sourceHeight / 2;
-  const display = displays.find(({ workArea }) => (
-    referenceX >= workArea.left && referenceX < workArea.left + workArea.width &&
-    referenceY >= workArea.top && referenceY < workArea.top + workArea.height
-  )) ?? displays.find(({ isPrimary }) => isPrimary);
+  const hasFocusedWindowBounds = focusedWindow?.width !== undefined && focusedWindow.height !== undefined;
+  const referenceX = hasFocusedWindowBounds ? (focusedWindow.left ?? 0) + focusedWindow.width! / 2 : undefined;
+  const referenceY = hasFocusedWindowBounds ? (focusedWindow.top ?? 0) + focusedWindow.height! / 2 : undefined;
+  const display = (referenceX !== undefined && referenceY !== undefined
+    ? displays.find(({ workArea }) => (
+      referenceX >= workArea.left && referenceX < workArea.left + workArea.width &&
+      referenceY >= workArea.top && referenceY < workArea.top + workArea.height
+    ))
+    : undefined) ?? displays.find(({ isPrimary }) => isPrimary);
 
   const workArea = display?.workArea;
+  if (!hasFocusedWindowBounds && !workArea) return undefined;
+
+  const sourceWidth = focusedWindow?.width ?? workArea!.width;
+  const sourceHeight = focusedWindow?.height ?? workArea!.height;
+  const sourceLeft = focusedWindow?.left ?? workArea!.left;
+  const sourceTop = focusedWindow?.top ?? workArea!.top;
   const width = Math.min(Math.round(sourceWidth * COMMAND_BAR_WINDOW_WIDTH_SCALE), workArea?.width ?? sourceWidth);
   const height = Math.min(Math.round(sourceHeight * COMMAND_BAR_WINDOW_HEIGHT_SCALE), workArea?.height ?? sourceHeight);
   const desiredLeft = Math.round(sourceLeft + (sourceWidth - width) / 2);
@@ -281,21 +286,21 @@ async function openCommandBarWindow() {
     if (commandBarWindowId !== undefined) return;
   }
 
+  const initialBounds = await initialCommandBarWindowBounds();
   const commandWindow = await browser.windows.create({
     url: browser.runtime.getURL('/command-bar.html'),
     type: 'popup',
     focused: true,
-    ...await initialCommandBarWindowBounds(),
+    ...initialBounds,
   });
   if (!commandWindow?.id) return;
 
+  const width = commandWindow.width ?? initialBounds?.width;
+  const height = commandWindow.height ?? initialBounds?.height;
   commandBarWindowId = commandWindow.id;
-  commandBarWindowBounds = {
-    width: commandWindow.width ?? COMMAND_BAR_FALLBACK_SIZE.width,
-    height: commandWindow.height ?? COMMAND_BAR_FALLBACK_SIZE.height,
-    left: commandWindow.left,
-    top: commandWindow.top,
-  };
+  commandBarWindowBounds = width === undefined || height === undefined
+    ? undefined
+    : { width, height, left: commandWindow.left, top: commandWindow.top };
 }
 
 async function storedLittleArcWindowId() {
@@ -321,17 +326,22 @@ async function initialLittleArcWindowBounds(sourceWindowId?: number) {
     sourceWindowId === undefined ? Promise.resolve(undefined) : browser.windows.get(sourceWindowId).catch(() => undefined),
     browser.system.display.getInfo().catch(() => []),
   ]);
-  const sourceWidth = sourceWindow?.width ?? LITTLE_ARC_FALLBACK_SIZE.width;
-  const sourceHeight = sourceWindow?.height ?? LITTLE_ARC_FALLBACK_SIZE.height;
-  const sourceLeft = sourceWindow?.left ?? 0;
-  const sourceTop = sourceWindow?.top ?? 0;
-  const sourceCenterX = sourceLeft + sourceWidth / 2;
-  const sourceCenterY = sourceTop + sourceHeight / 2;
-  const display = displays.find(({ workArea }) => (
-    sourceCenterX >= workArea.left && sourceCenterX < workArea.left + workArea.width &&
-    sourceCenterY >= workArea.top && sourceCenterY < workArea.top + workArea.height
-  )) ?? displays.find(({ isPrimary }) => isPrimary);
+  const hasSourceWindowBounds = sourceWindow?.width !== undefined && sourceWindow.height !== undefined;
+  const sourceCenterX = hasSourceWindowBounds ? (sourceWindow.left ?? 0) + sourceWindow.width! / 2 : undefined;
+  const sourceCenterY = hasSourceWindowBounds ? (sourceWindow.top ?? 0) + sourceWindow.height! / 2 : undefined;
+  const display = (sourceCenterX !== undefined && sourceCenterY !== undefined
+    ? displays.find(({ workArea }) => (
+      sourceCenterX >= workArea.left && sourceCenterX < workArea.left + workArea.width &&
+      sourceCenterY >= workArea.top && sourceCenterY < workArea.top + workArea.height
+    ))
+    : undefined) ?? displays.find(({ isPrimary }) => isPrimary);
   const workArea = display?.workArea;
+  if (!hasSourceWindowBounds && !workArea) return undefined;
+
+  const sourceWidth = sourceWindow?.width ?? workArea!.width;
+  const sourceHeight = sourceWindow?.height ?? workArea!.height;
+  const sourceLeft = sourceWindow?.left ?? workArea!.left;
+  const sourceTop = sourceWindow?.top ?? workArea!.top;
   const width = Math.min(Math.round(sourceWidth * LITTLE_ARC_WINDOW_WIDTH_SCALE), workArea?.width ?? sourceWidth);
   const height = Math.min(Math.round(sourceHeight * LITTLE_ARC_WINDOW_HEIGHT_SCALE), workArea?.height ?? sourceHeight);
   const desiredLeft = Math.round(sourceLeft + (sourceWidth - width) / 2);
@@ -365,19 +375,19 @@ async function openLittleArc(url: string, sourceWindowId?: number) {
     }
   }
 
+  const initialBounds = await initialLittleArcWindowBounds(sourceWindowId);
   const littleArcWindow = await browser.windows.create({
     url: normalizedUrl,
     type: 'popup',
     focused: true,
-    ...await initialLittleArcWindowBounds(sourceWindowId),
+    ...initialBounds,
   });
   if (littleArcWindow?.id !== undefined) {
-    littleArcWindowBounds = {
-      width: littleArcWindow.width ?? LITTLE_ARC_FALLBACK_SIZE.width,
-      height: littleArcWindow.height ?? LITTLE_ARC_FALLBACK_SIZE.height,
-      left: littleArcWindow.left,
-      top: littleArcWindow.top,
-    };
+    const width = littleArcWindow.width ?? initialBounds?.width;
+    const height = littleArcWindow.height ?? initialBounds?.height;
+    littleArcWindowBounds = width === undefined || height === undefined
+      ? undefined
+      : { width, height, left: littleArcWindow.left, top: littleArcWindow.top };
     await rememberLittleArcWindow(littleArcWindow.id);
   }
 }

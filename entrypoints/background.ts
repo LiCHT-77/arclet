@@ -142,14 +142,17 @@ async function searchSuggestions(query: string): Promise<string[]> {
 }
 
 async function search(query: string, excludedTabId?: number, excludedUrl?: string): Promise<CommandBarResults> {
+  const loweredQuery = query.trim().toLocaleLowerCase();
   const [tabs, bookmarks, history, suggestions] = await Promise.all([
     browser.tabs.query({}),
     browser.bookmarks.search(query),
-    browser.history.search({ text: query, maxResults: HISTORY_SEARCH_MAX_RESULTS, startTime: 0 }),
+    // 空入力時は履歴を候補として表示しない。
+    loweredQuery
+      ? browser.history.search({ text: query, maxResults: HISTORY_SEARCH_MAX_RESULTS, startTime: 0 })
+      : Promise.resolve([]),
     searchSuggestions(query),
   ]);
 
-  const loweredQuery = query.trim().toLocaleLowerCase();
   const matchingTabs = tabs
     .filter((tab) => tab.id !== undefined && tab.windowId !== undefined && tab.url)
     // コマンドバーの展開先である親タブと拡張機能の内部ページは、

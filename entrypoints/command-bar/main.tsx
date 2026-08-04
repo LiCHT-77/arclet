@@ -74,7 +74,8 @@ function ResultItem({ item, onSelect }: { item: CommandItem; onSelect: (item: Co
         <span className="flex items-center gap-2 truncate text-sm"><span className="truncate">{item.title}</span></span>
         <span className="truncate text-xs text-slate-500 dark:text-slate-300">{item.subtitle ?? item.url}</span>
       </span>
-      <span className="flex shrink-0 items-center justify-center" aria-label={sourceLabel[item.kind]} title={sourceLabel[item.kind]}>
+      <span className="flex shrink-0 items-center gap-1 text-xs text-slate-500 dark:text-slate-300" aria-label={sourceLabel[item.kind]} title={sourceLabel[item.kind]}>
+        {item.kind === 'tab' && <span>switch tab</span>}
         <Icon kind={item.kind} className="size-4 text-slate-500 dark:text-slate-300" />
       </span>
     </Command.Item>

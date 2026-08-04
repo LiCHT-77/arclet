@@ -65,7 +65,9 @@ export default defineContentScript({
       const focusCommandInput = () => {
         // `autofocus` inside an iframe does not always take focus away from an
         // already-focused control in the host page. Focus the browsing context
-        // first, then ask the command-bar document to focus its input.
+        // first, then ask the command-bar document to focus its input. This
+        // must run after `load`: before then the iframe is still its initial
+        // `about:blank` document, whose origin is the embedding site.
         iframe.focus({ preventScroll: true });
         iframe.contentWindow?.postMessage(
           { type: 'arclet:command-bar-focus' },
@@ -73,7 +75,6 @@ export default defineContentScript({
         );
       };
       iframe.addEventListener('load', focusCommandInput, { once: true });
-      focusCommandInput();
     };
 
     const toggle = () => {

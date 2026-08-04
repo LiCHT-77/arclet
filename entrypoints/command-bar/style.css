@@ -49,17 +49,19 @@ body { overflow: hidden; }
 .command-input-wrap { align-items: center; border-bottom: 1px solid var(--divider); display: flex; gap: 12px; padding: 15px 16px; }
 .search-mark, .command-icon { color: var(--muted-icon); flex: 0 0 auto; font-size: 19px; text-align: center; width: 20px; }
 .command-favicon { flex: 0 0 auto; height: 20px; object-fit: contain; width: 20px; }
+.command-favicon-placeholder { color: var(--muted-icon); flex: 0 0 auto; font-size: 13px; line-height: 20px; text-align: center; width: 20px; }
+.command-source-icon { align-items: center; display: flex; flex: 0 0 auto; justify-content: center; }
+.command-source-icon .command-icon { color: var(--label-text); font-size: 16px; }
 [cmdk-input] { background: transparent; border: 0; color: inherit; font: inherit; font-size: 16px; min-width: 0; outline: 0; width: 100%; }
 [cmdk-input]::placeholder { color: var(--placeholder); }
 kbd { background: var(--key-background); border: 1px solid var(--key-border); border-radius: 5px; color: var(--key-text); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 2px 5px; }
 [cmdk-list] { max-height: min(52vh, 450px); overflow: auto; padding: 8px; }
 [cmdk-item] { align-items: center; border-radius: 8px; cursor: pointer; display: flex; gap: 10px; min-height: 54px; padding: 8px 10px; }
 [cmdk-item][data-selected="true"] { background: var(--selected-background); }
-.command-copy { display: grid; gap: 3px; min-width: 0; }
+.command-copy { display: grid; flex: 1 1 auto; gap: 3px; min-width: 0; }
 .command-title, .command-subtitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .command-title { align-items: center; display: flex; font-size: 14px; gap: 7px; }
 .command-title > :first-child { overflow: hidden; text-overflow: ellipsis; }
-.source-label { background: var(--label-background); border-radius: 4px; color: var(--label-text); flex: 0 0 auto; font-size: 10px; line-height: 1; padding: 3px 4px; }
 .command-subtitle { color: var(--muted-text); font-size: 12px; }
 [cmdk-empty] { color: var(--muted-text); padding: 28px; text-align: center; }
 footer { border-top: 1px solid var(--divider); color: var(--muted-text); display: flex; font-size: 12px; gap: 16px; padding: 10px 16px; }

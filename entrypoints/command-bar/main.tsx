@@ -22,15 +22,15 @@ function toNavigableUrl(value: string): string | null {
   return null;
 }
 
-function Icon({ kind }: { kind: CommandItem['kind'] | 'url' | 'search' }) {
+function Icon({ kind, className }: { kind: CommandItem['kind'] | 'url' | 'search'; className?: string }) {
   const label = kind === 'tab' ? '▣' : kind === 'bookmark' ? '★' : kind === 'history' ? '◷' : kind === 'url' ? '↗' : '⌕';
-  return <span className="command-icon" aria-hidden="true">{label}</span>;
+  return <span className={`command-icon${className ? ` ${className}` : ''}`} aria-hidden="true">{label}</span>;
 }
 
 function Favicon({ item }: { item: CommandItem }) {
   const [failed, setFailed] = useState(false);
 
-  if (!item.faviconUrl || failed) return <Icon kind={item.kind} />;
+  if (!item.faviconUrl || failed) return <span className="command-favicon-placeholder" aria-hidden="true">◉</span>;
 
   return (
     <img
@@ -53,8 +53,11 @@ function ResultItem({ item, onSelect }: { item: CommandItem; onSelect: (item: Co
     <Command.Item value={item.id} onSelect={() => onSelect(item)}>
       <Favicon item={item} />
       <span className="command-copy">
-        <span className="command-title"><span>{item.title}</span><span className="source-label">{sourceLabel[item.kind]}</span></span>
+        <span className="command-title"><span>{item.title}</span></span>
         <span className="command-subtitle">{item.subtitle ?? item.url}</span>
+      </span>
+      <span className="command-source-icon" aria-label={sourceLabel[item.kind]} title={sourceLabel[item.kind]}>
+        <Icon kind={item.kind} />
       </span>
     </Command.Item>
   );

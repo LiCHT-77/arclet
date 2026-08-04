@@ -24,4 +24,5 @@ export type CommandBarMessage =
   | { type: 'command-bar:open-url'; url: string }
   | { type: 'command-bar:open-url-in-same-domain-tab'; url: string }
   | { type: 'command-bar:web-search'; query: string }
+  | { type: 'command-bar:resize-window'; contentHeight: number; frameHeight: number }
   | { type: 'command-bar:close-popup' };

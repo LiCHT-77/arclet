@@ -16,6 +16,7 @@ const LITTLE_ARC_CONTEXT_MENU_ID = 'open-link-in-little-arc';
 
 let commandBarWindowId: number | undefined;
 let commandBarWindowBounds: { width: number; height: number; left?: number; top?: number } | undefined;
+let commandBarWindowMaxHeight: number | undefined;
 let restoringCommandBarBounds = false;
 let littleArcWindowId: number | undefined;
 let littleArcWindowBounds: { width: number; height: number; left?: number; top?: number } | undefined;
@@ -242,6 +243,7 @@ async function closeCommandBarWindow() {
   const windowId = commandBarWindowId;
   commandBarWindowId = undefined;
   commandBarWindowBounds = undefined;
+  commandBarWindowMaxHeight = undefined;
   await browser.windows.remove(windowId).catch(() => undefined);
 }
 
@@ -301,9 +303,26 @@ async function openCommandBarWindow() {
   const width = commandWindow.width ?? initialBounds?.width;
   const height = commandWindow.height ?? initialBounds?.height;
   commandBarWindowId = commandWindow.id;
+  commandBarWindowMaxHeight = initialBounds?.height;
   commandBarWindowBounds = width === undefined || height === undefined
     ? undefined
     : { width, height, left: commandWindow.left, top: commandWindow.top };
+}
+
+async function resizeCommandBarWindow(contentHeight: number, frameHeight: number) {
+  if (commandBarWindowId === undefined || !commandBarWindowBounds || !commandBarWindowMaxHeight) return;
+
+  const current = commandBarWindowBounds;
+  const desiredHeight = Math.min(
+    commandBarWindowMaxHeight,
+    Math.max(1, Math.ceil(contentHeight + Math.max(0, frameHeight))),
+  );
+  if (desiredHeight === current.height) return;
+
+  const centerY = (current.top ?? 0) + current.height / 2;
+  const nextBounds = { ...current, height: desiredHeight, top: Math.round(centerY - desiredHeight / 2) };
+  commandBarWindowBounds = nextBounds;
+  await browser.windows.update(commandBarWindowId, nextBounds).catch(() => undefined);
 }
 
 async function storedLittleArcWindowId() {
@@ -473,6 +492,7 @@ export default defineBackground(() => {
     if (windowId === commandBarWindowId) {
       commandBarWindowId = undefined;
       commandBarWindowBounds = undefined;
+      commandBarWindowMaxHeight = undefined;
     }
     if (windowId === littleArcWindowId) void rememberLittleArcWindow(undefined);
     if (windowId === littleArcWindowId) littleArcWindowBounds = undefined;
@@ -508,6 +528,9 @@ export default defineBackground(() => {
       case 'command-bar:open-url-in-same-domain-tab': await openUrlInSameDomainTab(message.url); return;
       case 'command-bar:web-search':
         await browser.search.query({ text: message.query, disposition: 'NEW_TAB' });
+        return;
+      case 'command-bar:resize-window':
+        await resizeCommandBarWindow(message.contentHeight, message.frameHeight);
         return;
       case 'command-bar:close-popup':
         await closeCommandBarWindow();

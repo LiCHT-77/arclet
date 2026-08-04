@@ -84,6 +84,7 @@ function ResultItem({ item, onSelect }: { item: CommandItem; onSelect: (item: Co
 
 function App() {
   const isStandaloneWindow = window.parent === window;
+  const commandRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<CommandBarResults>(emptyResults);
@@ -144,6 +145,27 @@ function App() {
     return () => window.removeEventListener('message', onMessage);
   }, []);
 
+  useLayoutEffect(() => {
+    if (!isStandaloneWindow || !commandRef.current) return;
+
+    let previousHeight = 0;
+    const reportHeight = () => {
+      const contentHeight = Math.ceil(commandRef.current?.scrollHeight ?? 0);
+      if (!contentHeight || contentHeight === previousHeight) return;
+      previousHeight = contentHeight;
+      void browser.runtime.sendMessage<CommandBarMessage>({
+        type: 'command-bar:resize-window',
+        contentHeight,
+        frameHeight: Math.max(0, window.outerHeight - window.innerHeight),
+      });
+    };
+
+    const observer = new ResizeObserver(reportHeight);
+    observer.observe(commandRef.current);
+    reportHeight();
+    return () => observer.disconnect();
+  }, [isStandaloneWindow]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -186,11 +208,12 @@ function App() {
 
   return (
     <main
-      className={`flex min-h-dvh w-dvw justify-center bg-transparent font-sans ${isStandaloneWindow ? 'block' : 'items-start px-5 pt-24 pb-5'}`}
+      className={`bg-transparent font-sans ${isStandaloneWindow ? 'block w-full' : 'flex min-h-dvh w-dvw items-start justify-center px-5 pt-24 pb-5'}`}
       onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}
     >
       <Command
-        className={`max-w-none overflow-hidden border border-slate-200 bg-white text-slate-800 shadow-2xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 ${isStandaloneWindow ? 'flex h-dvh w-full flex-col rounded-none shadow-none' : 'w-[calc(100dvw*var(--arclet-command-bar-width-scale))] rounded-xl'}`}
+        ref={commandRef}
+        className={`max-w-none overflow-hidden border border-slate-200 bg-white text-slate-800 shadow-2xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 ${isStandaloneWindow ? 'flex w-full flex-col rounded-none shadow-none' : 'w-[calc(100dvw*var(--arclet-command-bar-width-scale))] rounded-xl'}`}
         style={isStandaloneWindow ? undefined : commandBarIframeScaleStyle}
         shouldFilter={false}
         label="Arclet command bar"
@@ -210,7 +233,7 @@ function App() {
           />
           <kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs text-slate-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300">Esc</kbd>
         </div>
-        <Command.List className={`max-h-96 overflow-auto p-2 ${isStandaloneWindow ? 'flex-1 max-h-none' : ''}`}>
+        <Command.List className="max-h-96 overflow-auto p-2">
           <Command.Empty className="p-7 text-center text-slate-500 dark:text-slate-300">候補が見つかりません</Command.Empty>
           {[...results.tabs, ...results.bookmarks].map((item) => <ResultItem key={item.id} item={item} onSelect={selectItem} />)}
           {navigableUrl && (

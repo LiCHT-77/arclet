@@ -26,6 +26,10 @@ function faviconUrlFor(url: string) {
   return faviconUrl.href;
 }
 
+function isArcletInternalPage(url?: string) {
+  return Boolean(url && url.startsWith(browser.runtime.getURL('/')));
+}
+
 function withoutDuplicateUrls(items: CommandItem[], seenUrls: Set<string>) {
   return items.filter((item) => {
     const url = normalizeUrl(item.url);
@@ -81,7 +85,11 @@ function limitHistoryResultsPerDomain(items: CommandItem[]) {
   return result;
 }
 
-async function search(query: string): Promise<CommandBarResults> {
+function isExcludedPageUrl(url: string, excludedUrl?: string) {
+  return Boolean(excludedUrl && historyPageKey(url) === historyPageKey(excludedUrl));
+}
+
+async function search(query: string, excludedTabId?: number, excludedUrl?: string): Promise<CommandBarResults> {
   const [tabs, bookmarks, history] = await Promise.all([
     browser.tabs.query({}),
     browser.bookmarks.search(query),
@@ -91,17 +99,22 @@ async function search(query: string): Promise<CommandBarResults> {
   const loweredQuery = query.trim().toLocaleLowerCase();
   const matchingTabs = tabs
     .filter((tab) => tab.id !== undefined && tab.windowId !== undefined && tab.url)
+    // コマンドバーの展開先である親タブと拡張機能の内部ページは、
+    // 移動先として選ぶ候補には含めない。
+    .filter((tab) => tab.id !== excludedTabId && !isArcletInternalPage(tab.url))
     .filter((tab) => !loweredQuery || `${tab.title} ${tab.url}`.toLocaleLowerCase().includes(loweredQuery))
     .slice(0, MAX_RESULTS)
     .map<CommandItem>((tab) => ({ id: `tab:${tab.id}`, kind: 'tab', title: titleFor(tab.url!, tab.title), url: tab.url!, subtitle: tab.url, faviconUrl: faviconUrlFor(tab.url!), tabId: tab.id!, windowId: tab.windowId! }));
 
   const matchingBookmarks = bookmarks
     .filter((bookmark) => Boolean(bookmark.url))
+    .filter((bookmark) => !isExcludedPageUrl(bookmark.url!, excludedUrl))
     .slice(0, MAX_RESULTS)
     .map<CommandItem>((bookmark) => ({ id: `bookmark:${bookmark.id}`, kind: 'bookmark', title: titleFor(bookmark.url!, bookmark.title), url: bookmark.url!, subtitle: bookmark.url, faviconUrl: faviconUrlFor(bookmark.url!) }));
 
   const matchingHistory = history
     .filter((entry) => Boolean(entry.url))
+    .filter((entry) => !isExcludedPageUrl(entry.url!, excludedUrl))
     .slice(0, HISTORY_SEARCH_MAX_RESULTS)
     .map<CommandItem>((entry) => ({ id: `history:${entry.id}`, kind: 'history', title: titleFor(entry.url!, entry.title), url: entry.url!, subtitle: entry.url, faviconUrl: faviconUrlFor(entry.url!) }));
 
@@ -276,9 +289,9 @@ export default defineBackground(() => {
     }
   });
 
-  browser.runtime.onMessage.addListener(async (message: CommandBarMessage) => {
+  browser.runtime.onMessage.addListener(async (message: CommandBarMessage, sender) => {
     switch (message.type) {
-      case 'command-bar:search': return search(message.query);
+      case 'command-bar:search': return search(message.query, sender.tab?.id, sender.tab?.url);
       case 'command-bar:activate-tab':
         await browser.windows.update(message.windowId, { focused: true });
         await browser.tabs.update(message.tabId, { active: true });

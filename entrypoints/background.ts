@@ -71,6 +71,43 @@ async function openUrl(url: string) {
   }
 }
 
+async function openUrlInSameDomainTab(url: string) {
+  const normalizedUrl = normalizeUrl(url);
+  let hostname: string;
+  try {
+    hostname = new URL(normalizedUrl).hostname;
+  } catch {
+    await openUrl(normalizedUrl);
+    return;
+  }
+
+  const existing = (await browser.tabs.query({})).find((tab) => {
+    if (!tab.url) return false;
+    try {
+      return new URL(tab.url).hostname === hostname;
+    } catch {
+      return false;
+    }
+  });
+
+  if (existing?.id !== undefined && existing.windowId !== undefined) {
+    await browser.windows.update(existing.windowId, { focused: true });
+    await browser.tabs.update(existing.id, { active: true });
+
+    if (normalizeUrl(existing.url ?? '') === normalizedUrl) return;
+
+    const result = await browser.tabs
+      .sendMessage(existing.id, { type: 'command-bar:spa-navigate', url: normalizedUrl })
+      .catch(() => ({ navigated: false }));
+    if (result?.navigated) return;
+
+    await browser.tabs.update(existing.id, { url: normalizedUrl });
+    return;
+  }
+
+  await openUrl(normalizedUrl);
+}
+
 export default defineBackground(() => {
   browser.commands.onCommand.addListener(async (command) => {
     if (command !== 'toggle-command-bar') return;
@@ -91,6 +128,7 @@ export default defineBackground(() => {
         await browser.tabs.update(message.tabId, { active: true });
         return;
       case 'command-bar:open-url': await openUrl(message.url); return;
+      case 'command-bar:open-url-in-same-domain-tab': await openUrlInSameDomainTab(message.url); return;
       case 'command-bar:web-search':
         await browser.search.query({ text: message.query, disposition: 'NEW_TAB' });
         return;

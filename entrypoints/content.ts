@@ -80,6 +80,28 @@ export default defineContentScript({
       if (document.getElementById(hostId)) close(); else open();
     };
 
+    const trySpaNavigation = async (url: string) => {
+      let targetUrl: string;
+      try {
+        targetUrl = new URL(url).href;
+      } catch {
+        return { navigated: false };
+      }
+
+      // サイトが document レベルでリンククリックを横取りしている場合は、
+      // 一時的なリンクでもクライアントルーターによる遷移になる。
+      const link = document.createElement('a');
+      link.href = targetUrl;
+      link.hidden = true;
+      link.tabIndex = -1;
+      link.setAttribute('aria-hidden', 'true');
+      (document.body ?? document.documentElement).append(link);
+      link.click();
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+      link.remove();
+      return { navigated: window.location.href === targetUrl };
+    };
+
     window.addEventListener('message', (event) => {
       const iframe = document.querySelector(`#${hostId} > iframe`) as HTMLIFrameElement | null;
       if (
@@ -90,7 +112,9 @@ export default defineContentScript({
     });
 
     browser.runtime.onMessage.addListener((message: unknown) => {
-      if ((message as { type?: string })?.type === 'command-bar:toggle') toggle();
+      const command = message as { type?: string; url?: string };
+      if (command.type === 'command-bar:toggle') toggle();
+      if (command.type === 'command-bar:spa-navigate' && command.url) return trySpaNavigation(command.url);
     });
   },
 });

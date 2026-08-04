@@ -66,6 +66,10 @@ function App() {
   const [results, setResults] = useState<CommandBarResults>(emptyResults);
   const [selectedValue, setSelectedValue] = useState('');
   const navigableUrl = useMemo(() => toNavigableUrl(query), [query]);
+  const selectedItem = useMemo(() => (
+    [...results.tabs, ...results.bookmarks, ...results.history]
+      .find((item) => item.id === selectedValue)
+  ), [results, selectedValue]);
   const selectableValues = useMemo(() => [
     ...results.tabs.map((item) => item.id),
     ...results.bookmarks.map((item) => item.id),
@@ -140,6 +144,18 @@ function App() {
     void run({ type: 'command-bar:open-url', url: item.url });
   };
 
+  const openInSameDomainTab = (event: React.KeyboardEvent) => {
+    if (event.key !== 'Enter' || !event.metaKey) return;
+
+    // URL を直接入力しているときは、候補の選択状態に関係なく入力 URL を開く。
+    const url = navigableUrl ?? selectedItem?.url;
+    if (!url) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    void run({ type: 'command-bar:open-url-in-same-domain-tab', url });
+  };
+
   return (
     <main className="command-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
       <Command
@@ -148,6 +164,7 @@ function App() {
         label="Arclet command bar"
         value={selectedValue}
         onValueChange={setSelectedValue}
+        onKeyDownCapture={openInSameDomainTab}
       >
         <div className="command-input-wrap">
           <span className="search-mark" aria-hidden="true">⌕</span>
@@ -175,7 +192,7 @@ function App() {
           )}
           {results.history.map((item) => <ResultItem key={item.id} item={item} onSelect={selectItem} />)}
         </Command.List>
-        <footer><span><kbd>↑↓</kbd> 移動</span><span><kbd>↵</kbd> 開く</span></footer>
+        <footer><span><kbd>↑↓</kbd> 移動</span><span><kbd>↵</kbd> 開く</span><span><kbd>⌘</kbd><kbd>↵</kbd> 同一ドメインのタブで開く</span></footer>
       </Command>
     </main>
   );

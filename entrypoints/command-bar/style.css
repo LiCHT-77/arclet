@@ -47,11 +47,11 @@ body { overflow: hidden; }
 .command-panel-window { border-radius: 0; box-shadow: none; display: flex; flex-direction: column; height: 100%; max-width: none; }
 .command-panel-window [cmdk-list] { flex: 1; max-height: none; }
 .command-input-wrap { align-items: center; border-bottom: 1px solid var(--divider); display: flex; gap: 12px; padding: 15px 16px; }
-.search-mark, .command-icon { color: var(--muted-icon); flex: 0 0 auto; font-size: 19px; text-align: center; width: 20px; }
+.search-mark, .command-icon { color: var(--muted-icon); flex: 0 0 auto; height: 20px; stroke-width: 1.8; width: 20px; }
 .command-favicon { flex: 0 0 auto; height: 20px; object-fit: contain; width: 20px; }
-.command-favicon-placeholder { color: var(--muted-icon); flex: 0 0 auto; font-size: 13px; line-height: 20px; text-align: center; width: 20px; }
+.command-favicon-placeholder { color: var(--muted-icon); flex: 0 0 auto; height: 20px; stroke-width: 1.8; width: 20px; }
 .command-source-icon { align-items: center; display: flex; flex: 0 0 auto; justify-content: center; }
-.command-source-icon .command-icon { color: var(--label-text); font-size: 16px; }
+.command-source-icon .command-icon { color: var(--label-text); height: 16px; width: 16px; }
 [cmdk-input] { background: transparent; border: 0; color: inherit; font: inherit; font-size: 16px; min-width: 0; outline: 0; width: 100%; }
 [cmdk-input]::placeholder { color: var(--placeholder); }
 kbd { background: var(--key-background); border: 1px solid var(--key-border); border-radius: 5px; color: var(--key-text); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 2px 5px; }

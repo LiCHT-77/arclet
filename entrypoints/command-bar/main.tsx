@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Command } from 'cmdk';
+import { Bookmark, ExternalLink, Globe, History, PanelsTopLeft, Search } from 'lucide-react';
 import type { CommandBarMessage, CommandBarResults, CommandItem } from '@/utils/command-bar';
 import './style.css';
 
@@ -23,14 +24,23 @@ function toNavigableUrl(value: string): string | null {
 }
 
 function Icon({ kind, className }: { kind: CommandItem['kind'] | 'url' | 'search'; className?: string }) {
-  const label = kind === 'tab' ? '▣' : kind === 'bookmark' ? '★' : kind === 'history' ? '◷' : kind === 'url' ? '↗' : '⌕';
-  return <span className={`command-icon${className ? ` ${className}` : ''}`} aria-hidden="true">{label}</span>;
+  const IconComponent = kind === 'tab'
+    ? PanelsTopLeft
+    : kind === 'bookmark'
+      ? Bookmark
+      : kind === 'history'
+        ? History
+        : kind === 'url'
+          ? ExternalLink
+          : Search;
+
+  return <IconComponent className={`command-icon${className ? ` ${className}` : ''}`} aria-hidden="true" />;
 }
 
 function Favicon({ item }: { item: CommandItem }) {
   const [failed, setFailed] = useState(false);
 
-  if (!item.faviconUrl || failed) return <span className="command-favicon-placeholder" aria-hidden="true">◉</span>;
+  if (!item.faviconUrl || failed) return <Globe className="command-favicon-placeholder" aria-hidden="true" />;
 
   return (
     <img
@@ -176,7 +186,7 @@ function App() {
         onKeyDownCapture={openInSameDomainTab}
       >
         <div className="command-input-wrap">
-          <span className="search-mark" aria-hidden="true">⌕</span>
+          <Search className="search-mark" aria-hidden="true" />
           <Command.Input
             ref={inputRef}
             autoFocus

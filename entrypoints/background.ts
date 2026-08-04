@@ -7,6 +7,7 @@ const MAX_HISTORY_RESULTS_PER_DOMAIN = 3;
 const HISTORY_SEARCH_MAX_RESULTS = MAX_RESULTS * MAX_HISTORY_RESULTS_PER_DOMAIN;
 const COMMAND_BAR_WINDOW_SIZE = { width: 680, height: 560 };
 const LITTLE_ARC_WINDOW_STORAGE_KEY = 'littleArcWindowId';
+const LITTLE_ARC_CONTEXT_MENU_ID = 'open-link-in-little-arc';
 const LITTLE_ARC_WINDOW_WIDTH_SCALE = 0.8;
 const LITTLE_ARC_WINDOW_HEIGHT_SCALE = 0.95;
 const LITTLE_ARC_FALLBACK_SIZE = { width: 960, height: 720 };
@@ -25,6 +26,15 @@ function titleFor(url: string, title?: string) {
 
 function normalizeUrl(url: string) {
   try { return new URL(url).href; } catch { return url; }
+}
+
+function isWebUrl(url: string) {
+  try {
+    const { protocol } = new URL(url);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 function faviconUrlFor(url: string) {
@@ -382,6 +392,19 @@ async function closeLittleArcWhenFocusLost(focusedWindowId: number) {
 }
 
 export default defineBackground(() => {
+  browser.contextMenus.removeAll()
+    .then(() => browser.contextMenus.create({
+      id: LITTLE_ARC_CONTEXT_MENU_ID,
+      title: 'Little Arc で開く',
+      contexts: ['link'],
+    }))
+    .catch(() => undefined);
+
+  browser.contextMenus.onClicked.addListener((info, tab) => {
+    if (info.menuItemId !== LITTLE_ARC_CONTEXT_MENU_ID || !info.linkUrl || !isWebUrl(info.linkUrl)) return;
+    void openLittleArc(info.linkUrl, tab?.windowId);
+  });
+
   browser.windows.onFocusChanged.addListener((windowId) => {
     if (commandBarWindowId !== undefined && windowId !== commandBarWindowId) {
       void closeCommandBarWindow();

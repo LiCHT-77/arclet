@@ -1,6 +1,7 @@
 import type { CommandBarMessage, CommandBarResults, CommandItem } from '@/utils/command-bar';
 
 const MAX_RESULTS = 50;
+const MAX_SEARCH_SUGGESTIONS = 3;
 const MAX_HISTORY_RESULTS_PER_DOMAIN = 3;
 const HISTORY_SEARCH_MAX_RESULTS = MAX_RESULTS * MAX_HISTORY_RESULTS_PER_DOMAIN;
 const COMMAND_BAR_WINDOW_SIZE = { width: 680, height: 560 };
@@ -89,11 +90,43 @@ function isExcludedPageUrl(url: string, excludedUrl?: string) {
   return Boolean(excludedUrl && historyPageKey(url) === historyPageKey(excludedUrl));
 }
 
+async function searchSuggestions(query: string): Promise<string[]> {
+  const trimmedQuery = query.trim();
+  if (!trimmedQuery) return [];
+
+  try {
+    const url = new URL('https://suggestqueries.google.com/complete/search');
+    url.searchParams.set('client', 'firefox');
+    url.searchParams.set('q', trimmedQuery);
+
+    const response = await fetch(url);
+    if (!response.ok) return [];
+
+    const data: unknown = await response.json();
+    if (!Array.isArray(data) || !Array.isArray(data[1])) return [];
+
+    const seen = new Set<string>();
+    return data[1]
+      .filter((suggestion): suggestion is string => typeof suggestion === 'string')
+      .map((suggestion) => suggestion.trim())
+      .filter((suggestion) => {
+        if (!suggestion || seen.has(suggestion)) return false;
+        seen.add(suggestion);
+        return true;
+      })
+      .slice(0, MAX_SEARCH_SUGGESTIONS);
+  } catch {
+    // ネットワークや候補サービスが利用できない場合も、他の候補検索は継続する。
+    return [];
+  }
+}
+
 async function search(query: string, excludedTabId?: number, excludedUrl?: string): Promise<CommandBarResults> {
-  const [tabs, bookmarks, history] = await Promise.all([
+  const [tabs, bookmarks, history, suggestions] = await Promise.all([
     browser.tabs.query({}),
     browser.bookmarks.search(query),
     browser.history.search({ text: query, maxResults: HISTORY_SEARCH_MAX_RESULTS, startTime: 0 }),
+    searchSuggestions(query),
   ]);
 
   const loweredQuery = query.trim().toLocaleLowerCase();
@@ -122,6 +155,7 @@ async function search(query: string, excludedTabId?: number, excludedUrl?: strin
   return {
     tabs: withoutDuplicateUrls(matchingTabs, seenUrls),
     bookmarks: withoutDuplicateUrls(matchingBookmarks, seenUrls),
+    searchSuggestions: suggestions,
     history: limitHistoryResultsPerDomain(
       withoutDuplicateHistoryPages(withoutDuplicateUrls(matchingHistory, seenUrls)),
     ).slice(0, MAX_RESULTS),

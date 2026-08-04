@@ -4,7 +4,7 @@ import { Command } from 'cmdk';
 import type { CommandBarMessage, CommandBarResults, CommandItem } from '@/utils/command-bar';
 import './style.css';
 
-const emptyResults: CommandBarResults = { tabs: [], bookmarks: [], history: [] };
+const emptyResults: CommandBarResults = { tabs: [], bookmarks: [], searchSuggestions: [], history: [] };
 
 function toNavigableUrl(value: string): string | null {
   const input = value.trim();
@@ -76,6 +76,7 @@ function App() {
     ...results.bookmarks.map((item) => item.id),
     ...(navigableUrl ? [`url:${navigableUrl}`] : []),
     ...(query.trim() ? [`search:${query.trim()}`] : []),
+    ...results.searchSuggestions.map((suggestion) => `suggestion:${suggestion}`),
     ...results.history.map((item) => item.id),
   ], [navigableUrl, query, results]);
 
@@ -195,6 +196,11 @@ function App() {
               <Icon kind="search" /><span className="command-copy"><span className="command-title">「{query.trim()}」を検索</span><span className="command-subtitle">ブラウザの既定検索エンジンを使用</span></span>
             </Command.Item>
           )}
+          {results.searchSuggestions.map((suggestion) => (
+            <Command.Item key={suggestion} value={`suggestion:${suggestion}`} onSelect={() => void run({ type: 'command-bar:web-search', query: suggestion })}>
+              <Icon kind="search" /><span className="command-copy"><span className="command-title">{suggestion}</span><span className="command-subtitle">検索候補</span></span>
+            </Command.Item>
+          ))}
           {results.history.map((item) => <ResultItem key={item.id} item={item} onSelect={selectItem} />)}
         </Command.List>
         <footer><span><kbd>↑↓</kbd> 移動</span><span><kbd>↵</kbd> 開く</span><span><kbd>⌘</kbd><kbd>↵</kbd> 同一ドメインのタブで開く</span></footer>

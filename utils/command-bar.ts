@@ -14,6 +14,7 @@ export interface CommandItem {
 export interface CommandBarResults {
   tabs: CommandItem[];
   bookmarks: CommandItem[];
+  searchSuggestions: string[];
   history: CommandItem[];
 }
 

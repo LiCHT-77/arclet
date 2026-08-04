@@ -141,12 +141,16 @@ async function search(query: string, excludedTabId?: number, excludedUrl?: strin
 
   const matchingBookmarks = bookmarks
     .filter((bookmark) => Boolean(bookmark.url))
+    // iframe 内で開いた command-bar.html も履歴候補と同様に表示しない。
+    .filter((bookmark) => !isArcletInternalPage(bookmark.url))
     .filter((bookmark) => !isExcludedPageUrl(bookmark.url!, excludedUrl))
     .slice(0, MAX_RESULTS)
     .map<CommandItem>((bookmark) => ({ id: `bookmark:${bookmark.id}`, kind: 'bookmark', title: titleFor(bookmark.url!, bookmark.title), url: bookmark.url!, subtitle: bookmark.url, faviconUrl: faviconUrlFor(bookmark.url!) }));
 
   const matchingHistory = history
     .filter((entry) => Boolean(entry.url))
+    // iframe 版のコマンドバーは自身の URL を履歴へ残すことがある。
+    .filter((entry) => !isArcletInternalPage(entry.url))
     .filter((entry) => !isExcludedPageUrl(entry.url!, excludedUrl))
     .slice(0, HISTORY_SEARCH_MAX_RESULTS)
     .map<CommandItem>((entry) => ({ id: `history:${entry.id}`, kind: 'history', title: titleFor(entry.url!, entry.title), url: entry.url!, subtitle: entry.url, faviconUrl: faviconUrlFor(entry.url!) }));

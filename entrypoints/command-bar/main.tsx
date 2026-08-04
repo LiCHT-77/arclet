@@ -61,6 +61,7 @@ function ResultItem({ item, onSelect }: { item: CommandItem; onSelect: (item: Co
 }
 
 function App() {
+  const isStandaloneWindow = window.parent === window;
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<CommandBarResults>(emptyResults);
@@ -79,6 +80,10 @@ function App() {
   ], [navigableUrl, query, results]);
 
   const close = () => {
+    if (window.parent === window) {
+      void browser.runtime.sendMessage({ type: 'command-bar:close-popup' });
+      return;
+    }
     window.parent.postMessage({ type: 'arclet:command-bar-close' }, '*');
   };
 
@@ -157,9 +162,9 @@ function App() {
   };
 
   return (
-    <main className="command-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
+    <main className={`command-overlay${isStandaloneWindow ? ' command-overlay-window' : ''}`} onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
       <Command
-        className="command-panel"
+        className={`command-panel${isStandaloneWindow ? ' command-panel-window' : ''}`}
         shouldFilter={false}
         label="Arclet command bar"
         value={selectedValue}

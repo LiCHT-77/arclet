@@ -38,11 +38,14 @@
 }
 
 * { box-sizing: border-box; }
-html, body, #root { width: 100%; min-width: 0; min-height: 100%; margin: 0; }
+html, body, #root { height: 100%; min-width: 0; min-height: 100%; margin: 0; width: 100%; }
 body { overflow: hidden; }
 
 .command-overlay { align-items: flex-start; background: transparent; display: flex; height: 100vh; justify-content: center; padding: min(18vh, 180px) 20px 20px; width: 100vw; }
 .command-panel { background: var(--panel-background); border: 1px solid var(--panel-border); border-radius: 14px; box-shadow: 0 24px 80px rgb(0 0 0 / 32%); color: var(--panel-text); max-width: 680px; overflow: hidden; width: 100%; }
+.command-overlay-window { display: block; height: 100%; padding: 0; width: 100%; }
+.command-panel-window { border-radius: 0; box-shadow: none; display: flex; flex-direction: column; height: 100%; max-width: none; }
+.command-panel-window [cmdk-list] { flex: 1; max-height: none; }
 .command-input-wrap { align-items: center; border-bottom: 1px solid var(--divider); display: flex; gap: 12px; padding: 15px 16px; }
 .search-mark, .command-icon { color: var(--muted-icon); flex: 0 0 auto; font-size: 19px; text-align: center; width: 20px; }
 .command-favicon { flex: 0 0 auto; height: 20px; object-fit: contain; width: 20px; }

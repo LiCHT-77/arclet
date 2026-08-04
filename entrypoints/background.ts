@@ -1,6 +1,11 @@
 import type { CommandBarMessage, CommandBarResults, CommandItem } from '@/utils/command-bar';
 
 const MAX_RESULTS = 50;
+const COMMAND_BAR_WINDOW_SIZE = { width: 680, height: 560 };
+
+let commandBarWindowId: number | undefined;
+let commandBarWindowBounds: { width: number; height: number; left?: number; top?: number } | undefined;
+let restoringCommandBarBounds = false;
 
 function titleFor(url: string, title?: string) {
   if (title) return title;
@@ -108,15 +113,116 @@ async function openUrlInSameDomainTab(url: string) {
   await openUrl(normalizedUrl);
 }
 
+async function closeCommandBarWindow() {
+  if (commandBarWindowId === undefined) return;
+  const windowId = commandBarWindowId;
+  commandBarWindowId = undefined;
+  commandBarWindowBounds = undefined;
+  await browser.windows.remove(windowId).catch(() => undefined);
+}
+
+async function commandBarWindowPosition() {
+  const [focusedWindow, displays] = await Promise.all([
+    browser.windows.getLastFocused().catch(() => undefined),
+    browser.system.display.getInfo().catch(() => []),
+  ]);
+  const referenceX = (focusedWindow?.left ?? 0) + (focusedWindow?.width ?? 0) / 2;
+  const referenceY = (focusedWindow?.top ?? 0) + (focusedWindow?.height ?? 0) / 2;
+  const display = displays.find(({ workArea }) => (
+    referenceX >= workArea.left && referenceX < workArea.left + workArea.width &&
+    referenceY >= workArea.top && referenceY < workArea.top + workArea.height
+  )) ?? displays.find(({ isPrimary }) => isPrimary);
+
+  if (display) {
+    const { workArea } = display;
+    return {
+      left: Math.round(workArea.left + (workArea.width - COMMAND_BAR_WINDOW_SIZE.width) / 2),
+      top: Math.round(workArea.top + (workArea.height - COMMAND_BAR_WINDOW_SIZE.height) / 2),
+    };
+  }
+
+  return {
+    left: Math.round((focusedWindow?.left ?? 0) + ((focusedWindow?.width ?? COMMAND_BAR_WINDOW_SIZE.width) - COMMAND_BAR_WINDOW_SIZE.width) / 2),
+    top: Math.round((focusedWindow?.top ?? 0) + ((focusedWindow?.height ?? COMMAND_BAR_WINDOW_SIZE.height) - COMMAND_BAR_WINDOW_SIZE.height) / 2),
+  };
+}
+
+async function openCommandBarWindow() {
+  if (commandBarWindowId !== undefined) {
+    await browser.windows.update(commandBarWindowId, { focused: true }).catch(() => {
+      commandBarWindowId = undefined;
+      commandBarWindowBounds = undefined;
+    });
+    if (commandBarWindowId !== undefined) return;
+  }
+
+  const commandWindow = await browser.windows.create({
+    url: browser.runtime.getURL('/command-bar.html'),
+    type: 'popup',
+    focused: true,
+    ...COMMAND_BAR_WINDOW_SIZE,
+    ...await commandBarWindowPosition(),
+  });
+  if (!commandWindow?.id) return;
+
+  commandBarWindowId = commandWindow.id;
+  commandBarWindowBounds = {
+    width: commandWindow.width ?? COMMAND_BAR_WINDOW_SIZE.width,
+    height: commandWindow.height ?? COMMAND_BAR_WINDOW_SIZE.height,
+    left: commandWindow.left,
+    top: commandWindow.top,
+  };
+}
+
 export default defineBackground(() => {
+  browser.windows.onFocusChanged.addListener((windowId) => {
+    if (commandBarWindowId !== undefined && windowId !== commandBarWindowId) {
+      void closeCommandBarWindow();
+    }
+  });
+
+  // Chromium の拡張機能ポップアップには、ネイティブウィンドウの移動・
+  // リサイズを無効にする API がありません。変更を検知して元の bounds に
+  // 戻すことで、コマンドバー専用の固定ウィンドウとして扱います。
+  browser.windows.onBoundsChanged.addListener((window) => {
+    const windowId = window.id;
+    if (
+      restoringCommandBarBounds ||
+      windowId === undefined ||
+      windowId !== commandBarWindowId ||
+      !commandBarWindowBounds ||
+      (window.width === commandBarWindowBounds.width &&
+        window.height === commandBarWindowBounds.height &&
+        window.left === commandBarWindowBounds.left &&
+        window.top === commandBarWindowBounds.top)
+    ) return;
+
+    restoringCommandBarBounds = true;
+    void browser.windows.update(windowId, commandBarWindowBounds)
+      .catch(() => undefined)
+      .finally(() => { restoringCommandBarBounds = false; });
+  });
+
+  browser.windows.onRemoved.addListener((windowId) => {
+    if (windowId === commandBarWindowId) {
+      commandBarWindowId = undefined;
+      commandBarWindowBounds = undefined;
+    }
+  });
+
   browser.commands.onCommand.addListener(async (command) => {
     if (command !== 'toggle-command-bar') return;
     const [activeTab] = await browser.tabs.query({ active: true, lastFocusedWindow: true });
-    if (activeTab?.id === undefined) return;
+    if (activeTab?.id === undefined) {
+      await openCommandBarWindow();
+      return;
+    }
     try {
       await browser.tabs.sendMessage(activeTab.id, { type: 'command-bar:toggle' });
     } catch {
-      // コンテンツスクリプトを注入できないブラウザ内部ページでは何もしない。
+      // ブラウザ内部ページなど、コンテンツスクリプトを注入できないページでは
+      // 独立した小窓でコマンドバーを表示する。
+      await openCommandBarWindow();
     }
   });
 
@@ -131,6 +237,9 @@ export default defineBackground(() => {
       case 'command-bar:open-url-in-same-domain-tab': await openUrlInSameDomainTab(message.url); return;
       case 'command-bar:web-search':
         await browser.search.query({ text: message.query, disposition: 'NEW_TAB' });
+        return;
+      case 'command-bar:close-popup':
+        await closeCommandBarWindow();
         return;
     }
   });

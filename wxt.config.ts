@@ -5,7 +5,7 @@ import tailwindcss from '@tailwindcss/vite';
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
   manifest: {
-    permissions: ['tabs', 'bookmarks', 'history', 'search', 'favicon'],
+    permissions: ['tabs', 'windows', 'system.display', 'bookmarks', 'history', 'search', 'favicon'],
     commands: {
       'toggle-command-bar': {
         suggested_key: {

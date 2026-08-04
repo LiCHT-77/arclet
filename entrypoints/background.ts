@@ -7,7 +7,8 @@ const MAX_HISTORY_RESULTS_PER_DOMAIN = 3;
 const HISTORY_SEARCH_MAX_RESULTS = MAX_RESULTS * MAX_HISTORY_RESULTS_PER_DOMAIN;
 const COMMAND_BAR_WINDOW_SIZE = { width: 680, height: 560 };
 const LITTLE_ARC_WINDOW_STORAGE_KEY = 'littleArcWindowId';
-const LITTLE_ARC_WINDOW_SCALE = 0.95;
+const LITTLE_ARC_WINDOW_WIDTH_SCALE = 0.8;
+const LITTLE_ARC_WINDOW_HEIGHT_SCALE = 0.95;
 const LITTLE_ARC_FALLBACK_SIZE = { width: 960, height: 720 };
 
 let commandBarWindowId: number | undefined;
@@ -314,8 +315,8 @@ async function littleArcWindowBounds(sourceWindowId?: number) {
     sourceCenterY >= workArea.top && sourceCenterY < workArea.top + workArea.height
   )) ?? displays.find(({ isPrimary }) => isPrimary);
   const workArea = display?.workArea;
-  const width = Math.min(Math.round(sourceWidth * LITTLE_ARC_WINDOW_SCALE), workArea?.width ?? sourceWidth);
-  const height = Math.min(Math.round(sourceHeight * LITTLE_ARC_WINDOW_SCALE), workArea?.height ?? sourceHeight);
+  const width = Math.min(Math.round(sourceWidth * LITTLE_ARC_WINDOW_WIDTH_SCALE), workArea?.width ?? sourceWidth);
+  const height = Math.min(Math.round(sourceHeight * LITTLE_ARC_WINDOW_HEIGHT_SCALE), workArea?.height ?? sourceHeight);
   const desiredLeft = Math.round(sourceLeft + (sourceWidth - width) / 2);
   const desiredTop = Math.round(sourceTop + (sourceHeight - height) / 2);
 

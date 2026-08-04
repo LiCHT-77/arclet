@@ -5,7 +5,9 @@ const MAX_RESULTS = 50;
 const MAX_SEARCH_SUGGESTIONS = 3;
 const MAX_HISTORY_RESULTS_PER_DOMAIN = 3;
 const HISTORY_SEARCH_MAX_RESULTS = MAX_RESULTS * MAX_HISTORY_RESULTS_PER_DOMAIN;
-const COMMAND_BAR_WINDOW_SIZE = { width: 680, height: 560 };
+const COMMAND_BAR_WINDOW_WIDTH_SCALE = 0.7;
+const COMMAND_BAR_WINDOW_HEIGHT_SCALE = 0.6;
+const COMMAND_BAR_FALLBACK_SIZE = { width: 960, height: 720 };
 const LITTLE_ARC_WINDOW_STORAGE_KEY = 'littleArcWindowId';
 const LITTLE_ARC_CONTEXT_MENU_ID = 'open-link-in-little-arc';
 const LITTLE_ARC_WINDOW_WIDTH_SCALE = 0.8;
@@ -240,29 +242,33 @@ async function closeCommandBarWindow() {
   await browser.windows.remove(windowId).catch(() => undefined);
 }
 
-async function commandBarWindowPosition() {
+async function initialCommandBarWindowBounds() {
   const [focusedWindow, displays] = await Promise.all([
     browser.windows.getLastFocused().catch(() => undefined),
     browser.system.display.getInfo().catch(() => []),
   ]);
-  const referenceX = (focusedWindow?.left ?? 0) + (focusedWindow?.width ?? 0) / 2;
-  const referenceY = (focusedWindow?.top ?? 0) + (focusedWindow?.height ?? 0) / 2;
+  const sourceWidth = focusedWindow?.width ?? COMMAND_BAR_FALLBACK_SIZE.width;
+  const sourceHeight = focusedWindow?.height ?? COMMAND_BAR_FALLBACK_SIZE.height;
+  const sourceLeft = focusedWindow?.left ?? 0;
+  const sourceTop = focusedWindow?.top ?? 0;
+  const referenceX = sourceLeft + sourceWidth / 2;
+  const referenceY = sourceTop + sourceHeight / 2;
   const display = displays.find(({ workArea }) => (
     referenceX >= workArea.left && referenceX < workArea.left + workArea.width &&
     referenceY >= workArea.top && referenceY < workArea.top + workArea.height
   )) ?? displays.find(({ isPrimary }) => isPrimary);
 
-  if (display) {
-    const { workArea } = display;
-    return {
-      left: Math.round(workArea.left + (workArea.width - COMMAND_BAR_WINDOW_SIZE.width) / 2),
-      top: Math.round(workArea.top + (workArea.height - COMMAND_BAR_WINDOW_SIZE.height) / 2),
-    };
-  }
+  const workArea = display?.workArea;
+  const width = Math.min(Math.round(sourceWidth * COMMAND_BAR_WINDOW_WIDTH_SCALE), workArea?.width ?? sourceWidth);
+  const height = Math.min(Math.round(sourceHeight * COMMAND_BAR_WINDOW_HEIGHT_SCALE), workArea?.height ?? sourceHeight);
+  const desiredLeft = Math.round(sourceLeft + (sourceWidth - width) / 2);
+  const desiredTop = Math.round(sourceTop + (sourceHeight - height) / 2);
 
   return {
-    left: Math.round((focusedWindow?.left ?? 0) + ((focusedWindow?.width ?? COMMAND_BAR_WINDOW_SIZE.width) - COMMAND_BAR_WINDOW_SIZE.width) / 2),
-    top: Math.round((focusedWindow?.top ?? 0) + ((focusedWindow?.height ?? COMMAND_BAR_WINDOW_SIZE.height) - COMMAND_BAR_WINDOW_SIZE.height) / 2),
+    width,
+    height,
+    left: workArea ? Math.max(workArea.left, Math.min(desiredLeft, workArea.left + workArea.width - width)) : desiredLeft,
+    top: workArea ? Math.max(workArea.top, Math.min(desiredTop, workArea.top + workArea.height - height)) : desiredTop,
   };
 }
 
@@ -279,15 +285,14 @@ async function openCommandBarWindow() {
     url: browser.runtime.getURL('/command-bar.html'),
     type: 'popup',
     focused: true,
-    ...COMMAND_BAR_WINDOW_SIZE,
-    ...await commandBarWindowPosition(),
+    ...await initialCommandBarWindowBounds(),
   });
   if (!commandWindow?.id) return;
 
   commandBarWindowId = commandWindow.id;
   commandBarWindowBounds = {
-    width: commandWindow.width ?? COMMAND_BAR_WINDOW_SIZE.width,
-    height: commandWindow.height ?? COMMAND_BAR_WINDOW_SIZE.height,
+    width: commandWindow.width ?? COMMAND_BAR_FALLBACK_SIZE.width,
+    height: commandWindow.height ?? COMMAND_BAR_FALLBACK_SIZE.height,
     left: commandWindow.left,
     top: commandWindow.top,
   };

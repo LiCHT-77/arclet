@@ -25,5 +25,12 @@ export default defineConfig({
   },
   vite: () => ({
     plugins: [tailwindcss()],
+    // The command bar is mounted in a short-lived iframe. Vite's automatic
+    // modulepreload hint can outlive that iframe and triggers Chrome's
+    // "preloaded but not used" warning. Native ESM imports still load the
+    // shared React chunk when the command bar is opened.
+    build: {
+      modulePreload: false,
+    },
   }),
 });

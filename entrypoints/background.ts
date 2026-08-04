@@ -15,6 +15,8 @@ let commandBarWindowId: number | undefined;
 let commandBarWindowBounds: { width: number; height: number; left?: number; top?: number } | undefined;
 let restoringCommandBarBounds = false;
 let littleArcWindowId: number | undefined;
+let littleArcWindowBounds: { width: number; height: number; left?: number; top?: number } | undefined;
+let restoringLittleArcBounds = false;
 
 function titleFor(url: string, title?: string) {
   if (title) return title;
@@ -299,7 +301,7 @@ async function rememberLittleArcWindow(windowId: number | undefined) {
   }
 }
 
-async function littleArcWindowBounds(sourceWindowId?: number) {
+async function initialLittleArcWindowBounds(sourceWindowId?: number) {
   const [sourceWindow, displays] = await Promise.all([
     sourceWindowId === undefined ? Promise.resolve(undefined) : browser.windows.get(sourceWindowId).catch(() => undefined),
     browser.system.display.getInfo().catch(() => []),
@@ -352,9 +354,17 @@ async function openLittleArc(url: string, sourceWindowId?: number) {
     url: normalizedUrl,
     type: 'popup',
     focused: true,
-    ...await littleArcWindowBounds(sourceWindowId),
+    ...await initialLittleArcWindowBounds(sourceWindowId),
   });
-  if (littleArcWindow?.id !== undefined) await rememberLittleArcWindow(littleArcWindow.id);
+  if (littleArcWindow?.id !== undefined) {
+    littleArcWindowBounds = {
+      width: littleArcWindow.width ?? LITTLE_ARC_FALLBACK_SIZE.width,
+      height: littleArcWindow.height ?? LITTLE_ARC_FALLBACK_SIZE.height,
+      left: littleArcWindow.left,
+      top: littleArcWindow.top,
+    };
+    await rememberLittleArcWindow(littleArcWindow.id);
+  }
 }
 
 async function closeLittleArcWindow() {
@@ -362,6 +372,7 @@ async function closeLittleArcWindow() {
   if (windowId === undefined) return;
 
   await rememberLittleArcWindow(undefined);
+  littleArcWindowBounds = undefined;
   await browser.windows.remove(windowId).catch(() => undefined);
 }
 
@@ -380,24 +391,41 @@ export default defineBackground(() => {
 
   // Chromium の拡張機能ポップアップには、ネイティブウィンドウの移動・
   // リサイズを無効にする API がありません。変更を検知して元の bounds に
-  // 戻すことで、コマンドバー専用の固定ウィンドウとして扱います。
+  // 戻すことで、コマンドバーと Little Arc を固定ウィンドウとして扱います。
   browser.windows.onBoundsChanged.addListener((window) => {
     const windowId = window.id;
+    if (windowId === undefined) return;
+
     if (
-      restoringCommandBarBounds ||
-      windowId === undefined ||
-      windowId !== commandBarWindowId ||
-      !commandBarWindowBounds ||
-      (window.width === commandBarWindowBounds.width &&
-        window.height === commandBarWindowBounds.height &&
-        window.left === commandBarWindowBounds.left &&
-        window.top === commandBarWindowBounds.top)
+      !restoringCommandBarBounds &&
+      windowId === commandBarWindowId &&
+      commandBarWindowBounds &&
+      (window.width !== commandBarWindowBounds.width ||
+        window.height !== commandBarWindowBounds.height ||
+        window.left !== commandBarWindowBounds.left ||
+        window.top !== commandBarWindowBounds.top)
+    ) {
+      restoringCommandBarBounds = true;
+      void browser.windows.update(windowId, commandBarWindowBounds)
+        .catch(() => undefined)
+        .finally(() => { restoringCommandBarBounds = false; });
+      return;
+    }
+
+    if (
+      restoringLittleArcBounds ||
+      windowId !== littleArcWindowId ||
+      !littleArcWindowBounds ||
+      (window.width === littleArcWindowBounds.width &&
+        window.height === littleArcWindowBounds.height &&
+        window.left === littleArcWindowBounds.left &&
+        window.top === littleArcWindowBounds.top)
     ) return;
 
-    restoringCommandBarBounds = true;
-    void browser.windows.update(windowId, commandBarWindowBounds)
+    restoringLittleArcBounds = true;
+    void browser.windows.update(windowId, littleArcWindowBounds)
       .catch(() => undefined)
-      .finally(() => { restoringCommandBarBounds = false; });
+      .finally(() => { restoringLittleArcBounds = false; });
   });
 
   browser.windows.onRemoved.addListener((windowId) => {
@@ -406,6 +434,7 @@ export default defineBackground(() => {
       commandBarWindowBounds = undefined;
     }
     if (windowId === littleArcWindowId) void rememberLittleArcWindow(undefined);
+    if (windowId === littleArcWindowId) littleArcWindowBounds = undefined;
   });
 
   browser.commands.onCommand.addListener(async (command) => {

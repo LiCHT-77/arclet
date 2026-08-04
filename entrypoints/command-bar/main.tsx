@@ -34,17 +34,17 @@ function Icon({ kind, className }: { kind: CommandItem['kind'] | 'url' | 'search
           ? ExternalLink
           : Search;
 
-  return <IconComponent className={`command-icon${className ? ` ${className}` : ''}`} aria-hidden="true" />;
+  return <IconComponent className={`size-5 shrink-0 stroke-2 text-slate-500 dark:text-slate-300${className ? ` ${className}` : ''}`} aria-hidden="true" />;
 }
 
 function Favicon({ item }: { item: CommandItem }) {
   const [failed, setFailed] = useState(false);
 
-  if (!item.faviconUrl || failed) return <Globe className="command-favicon-placeholder" aria-hidden="true" />;
+  if (!item.faviconUrl || failed) return <Globe className="size-5 shrink-0 stroke-2 text-slate-500 dark:text-slate-300" aria-hidden="true" />;
 
   return (
     <img
-      className="command-favicon"
+      className="size-5 shrink-0 object-contain"
       src={item.faviconUrl}
       alt=""
       onError={() => setFailed(true)}
@@ -60,14 +60,18 @@ const sourceLabel: Record<CommandItem['kind'], string> = {
 
 function ResultItem({ item, onSelect }: { item: CommandItem; onSelect: (item: CommandItem) => void }) {
   return (
-    <Command.Item value={item.id} onSelect={() => onSelect(item)}>
+    <Command.Item
+      className="flex min-h-14 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 data-[selected=true]:bg-indigo-50 dark:data-[selected=true]:bg-slate-700"
+      value={item.id}
+      onSelect={() => onSelect(item)}
+    >
       <Favicon item={item} />
-      <span className="command-copy">
-        <span className="command-title"><span>{item.title}</span></span>
-        <span className="command-subtitle">{item.subtitle ?? item.url}</span>
+      <span className="grid min-w-0 flex-1 gap-1">
+        <span className="flex items-center gap-2 truncate text-sm"><span className="truncate">{item.title}</span></span>
+        <span className="truncate text-xs text-slate-500 dark:text-slate-300">{item.subtitle ?? item.url}</span>
       </span>
-      <span className="command-source-icon" aria-label={sourceLabel[item.kind]} title={sourceLabel[item.kind]}>
-        <Icon kind={item.kind} />
+      <span className="flex shrink-0 items-center justify-center" aria-label={sourceLabel[item.kind]} title={sourceLabel[item.kind]}>
+        <Icon kind={item.kind} className="size-4 text-slate-500 dark:text-slate-300" />
       </span>
     </Command.Item>
   );
@@ -176,47 +180,51 @@ function App() {
   };
 
   return (
-    <main className={`command-overlay${isStandaloneWindow ? ' command-overlay-window' : ''}`} onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
+    <main
+      className={`flex min-h-dvh w-dvw justify-center bg-transparent font-sans ${isStandaloneWindow ? 'block' : 'items-start px-5 pt-24 pb-5'}`}
+      onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}
+    >
       <Command
-        className={`command-panel${isStandaloneWindow ? ' command-panel-window' : ''}`}
+        className={`w-full overflow-hidden border border-slate-200 bg-white text-slate-800 shadow-2xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 ${isStandaloneWindow ? 'flex h-dvh max-w-none flex-col rounded-none shadow-none' : 'max-w-2xl rounded-xl'}`}
         shouldFilter={false}
         label="Arclet command bar"
         value={selectedValue}
         onValueChange={setSelectedValue}
         onKeyDownCapture={openInSameDomainTab}
       >
-        <div className="command-input-wrap">
-          <Search className="search-mark" aria-hidden="true" />
+        <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-4 dark:border-slate-700">
+          <Search className="size-5 shrink-0 stroke-2 text-slate-500 dark:text-slate-300" aria-hidden="true" />
           <Command.Input
+            className="w-full min-w-0 border-0 bg-transparent text-base outline-none placeholder:text-slate-500 dark:placeholder:text-slate-300"
             ref={inputRef}
             autoFocus
             value={query}
             onValueChange={setQuery}
             placeholder="タブ、ブックマーク、履歴を検索"
           />
-          <kbd>Esc</kbd>
+          <kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs text-slate-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300">Esc</kbd>
         </div>
-        <Command.List>
-          <Command.Empty>候補が見つかりません</Command.Empty>
+        <Command.List className={`max-h-96 overflow-auto p-2 ${isStandaloneWindow ? 'flex-1 max-h-none' : ''}`}>
+          <Command.Empty className="p-7 text-center text-slate-500 dark:text-slate-300">候補が見つかりません</Command.Empty>
           {[...results.tabs, ...results.bookmarks].map((item) => <ResultItem key={item.id} item={item} onSelect={selectItem} />)}
           {navigableUrl && (
-            <Command.Item value={`url:${navigableUrl}`} onSelect={() => void run({ type: 'command-bar:open-url', url: navigableUrl })}>
-              <Icon kind="url" /><span className="command-copy"><span className="command-title">{navigableUrl} を開く</span><span className="command-subtitle">新規タブまたは既存のタブへ移動</span></span>
+            <Command.Item className="flex min-h-14 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 data-[selected=true]:bg-indigo-50 dark:data-[selected=true]:bg-slate-700" value={`url:${navigableUrl}`} onSelect={() => void run({ type: 'command-bar:open-url', url: navigableUrl })}>
+              <Icon kind="url" /><span className="grid min-w-0 flex-1 gap-1"><span className="truncate text-sm">{navigableUrl} を開く</span><span className="truncate text-xs text-slate-500 dark:text-slate-300">新規タブまたは既存のタブへ移動</span></span>
             </Command.Item>
           )}
           {query.trim() && (
-            <Command.Item value={`search:${query.trim()}`} onSelect={() => void run({ type: 'command-bar:web-search', query: query.trim() })}>
-              <Icon kind="search" /><span className="command-copy"><span className="command-title">「{query.trim()}」を検索</span><span className="command-subtitle">ブラウザの既定検索エンジンを使用</span></span>
+            <Command.Item className="flex min-h-14 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 data-[selected=true]:bg-indigo-50 dark:data-[selected=true]:bg-slate-700" value={`search:${query.trim()}`} onSelect={() => void run({ type: 'command-bar:web-search', query: query.trim() })}>
+              <Icon kind="search" /><span className="grid min-w-0 flex-1 gap-1"><span className="truncate text-sm">「{query.trim()}」を検索</span><span className="truncate text-xs text-slate-500 dark:text-slate-300">ブラウザの既定検索エンジンを使用</span></span>
             </Command.Item>
           )}
           {results.searchSuggestions.map((suggestion) => (
-            <Command.Item key={suggestion} value={`suggestion:${suggestion}`} onSelect={() => void run({ type: 'command-bar:web-search', query: suggestion })}>
-              <Icon kind="search" /><span className="command-copy"><span className="command-title">{suggestion}</span><span className="command-subtitle">検索候補</span></span>
+            <Command.Item className="flex min-h-14 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 data-[selected=true]:bg-indigo-50 dark:data-[selected=true]:bg-slate-700" key={suggestion} value={`suggestion:${suggestion}`} onSelect={() => void run({ type: 'command-bar:web-search', query: suggestion })}>
+              <Icon kind="search" /><span className="grid min-w-0 flex-1 gap-1"><span className="truncate text-sm">{suggestion}</span><span className="truncate text-xs text-slate-500 dark:text-slate-300">検索候補</span></span>
             </Command.Item>
           ))}
           {results.history.map((item) => <ResultItem key={item.id} item={item} onSelect={selectItem} />)}
         </Command.List>
-        <footer><span><kbd>↑↓</kbd> 移動</span><span><kbd>↵</kbd> 開く</span><span><kbd>⌘</kbd><kbd>↵</kbd> 同一ドメインのタブで開く</span></footer>
+        <footer className="flex gap-4 border-t border-slate-200 px-4 py-2.5 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-300"><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↑↓</kbd> 移動</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↵</kbd> 開く</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">⌘</kbd><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↵</kbd> 同一ドメインのタブで開く</span></footer>
       </Command>
     </main>
   );

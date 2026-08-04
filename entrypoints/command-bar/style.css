@@ -1,68 +1,13 @@
-:root {
-  color-scheme: light;
-  --panel-background: #fff;
-  --panel-border: #d9dce3;
-  --panel-text: #20232b;
-  --divider: #e6e8ed;
-  --muted-icon: #5b6475;
-  --placeholder: #777f90;
-  --key-background: #f0f1f4;
-  --key-border: #d9dce3;
-  --key-text: #656d7c;
-  --selected-background: #edf1ff;
-  --label-background: #f0f1f4;
-  --label-text: #687183;
-  --muted-text: #71798a;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-}
+@import "tailwindcss";
 
-@media (prefers-color-scheme: dark) {
+/* iframe 自身の canvas を透過させ、背後のページを表示する。 */
+@layer base {
   :root {
-    color-scheme: dark;
-    --panel-background: #1c1d22;
-    --panel-border: #383b43;
-    --panel-text: #f3f5f7;
-    --divider: #34363d;
-    --muted-icon: #a8b0c0;
-    --placeholder: #8f97a6;
-    --key-background: #2a2d34;
-    --key-border: #454852;
-    --key-text: #adb4c2;
-    --selected-background: #2a344f;
-    --label-background: #2d3038;
-    --label-text: #abb2c0;
-    --muted-text: #a1a8b7;
+    color-scheme: light dark;
+  }
+
+  html,
+  body {
+    @apply bg-transparent;
   }
 }
-
-* { box-sizing: border-box; }
-html, body, #root { height: 100%; min-width: 0; min-height: 100%; margin: 0; width: 100%; }
-body { overflow: hidden; }
-
-.command-overlay { align-items: flex-start; background: transparent; display: flex; height: 100vh; justify-content: center; padding: min(18vh, 180px) 20px 20px; width: 100vw; }
-.command-panel { background: var(--panel-background); border: 1px solid var(--panel-border); border-radius: 14px; box-shadow: 0 24px 80px rgb(0 0 0 / 32%); color: var(--panel-text); max-width: 680px; overflow: hidden; width: 100%; }
-.command-overlay-window { display: block; height: 100%; padding: 0; width: 100%; }
-.command-panel-window { border-radius: 0; box-shadow: none; display: flex; flex-direction: column; height: 100%; max-width: none; }
-.command-panel-window [cmdk-list] { flex: 1; max-height: none; }
-.command-input-wrap { align-items: center; border-bottom: 1px solid var(--divider); display: flex; gap: 12px; padding: 15px 16px; }
-.search-mark, .command-icon { color: var(--muted-icon); flex: 0 0 auto; height: 20px; stroke-width: 1.8; width: 20px; }
-.command-favicon { flex: 0 0 auto; height: 20px; object-fit: contain; width: 20px; }
-.command-favicon-placeholder { color: var(--muted-icon); flex: 0 0 auto; height: 20px; stroke-width: 1.8; width: 20px; }
-.command-source-icon { align-items: center; display: flex; flex: 0 0 auto; justify-content: center; }
-.command-source-icon .command-icon { color: var(--label-text); height: 16px; width: 16px; }
-[cmdk-input] { background: transparent; border: 0; color: inherit; font: inherit; font-size: 16px; min-width: 0; outline: 0; width: 100%; }
-[cmdk-input]::placeholder { color: var(--placeholder); }
-kbd { background: var(--key-background); border: 1px solid var(--key-border); border-radius: 5px; color: var(--key-text); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 2px 5px; }
-[cmdk-list] { max-height: min(52vh, 450px); overflow: auto; padding: 8px; }
-[cmdk-item] { align-items: center; border-radius: 8px; cursor: pointer; display: flex; gap: 10px; min-height: 54px; padding: 8px 10px; }
-[cmdk-item][data-selected="true"] { background: var(--selected-background); }
-.command-copy { display: grid; flex: 1 1 auto; gap: 3px; min-width: 0; }
-.command-title, .command-subtitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.command-title { align-items: center; display: flex; font-size: 14px; gap: 7px; }
-.command-title > :first-child { overflow: hidden; text-overflow: ellipsis; }
-.command-subtitle { color: var(--muted-text); font-size: 12px; }
-[cmdk-empty] { color: var(--muted-text); padding: 28px; text-align: center; }
-footer { border-top: 1px solid var(--divider); color: var(--muted-text); display: flex; font-size: 12px; gap: 16px; padding: 10px 16px; }
-footer span { align-items: center; display: flex; gap: 5px; }

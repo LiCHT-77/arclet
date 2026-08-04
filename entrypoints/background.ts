@@ -1,14 +1,19 @@
 import type { CommandBarMessage, CommandBarResults, CommandItem } from '@/utils/command-bar';
+import type { LittleArcMessage } from '@/utils/little-arc';
 
 const MAX_RESULTS = 50;
 const MAX_SEARCH_SUGGESTIONS = 3;
 const MAX_HISTORY_RESULTS_PER_DOMAIN = 3;
 const HISTORY_SEARCH_MAX_RESULTS = MAX_RESULTS * MAX_HISTORY_RESULTS_PER_DOMAIN;
 const COMMAND_BAR_WINDOW_SIZE = { width: 680, height: 560 };
+const LITTLE_ARC_WINDOW_STORAGE_KEY = 'littleArcWindowId';
+const LITTLE_ARC_WINDOW_SCALE = 0.95;
+const LITTLE_ARC_FALLBACK_SIZE = { width: 960, height: 720 };
 
 let commandBarWindowId: number | undefined;
 let commandBarWindowBounds: { width: number; height: number; left?: number; top?: number } | undefined;
 let restoringCommandBarBounds = false;
+let littleArcWindowId: number | undefined;
 
 function titleFor(url: string, title?: string) {
   if (title) return title;
@@ -275,11 +280,101 @@ async function openCommandBarWindow() {
   };
 }
 
+async function storedLittleArcWindowId() {
+  if (littleArcWindowId !== undefined) return littleArcWindowId;
+
+  const stored = await browser.storage.session.get(LITTLE_ARC_WINDOW_STORAGE_KEY);
+  const windowId = stored[LITTLE_ARC_WINDOW_STORAGE_KEY];
+  if (typeof windowId === 'number') littleArcWindowId = windowId;
+  return littleArcWindowId;
+}
+
+async function rememberLittleArcWindow(windowId: number | undefined) {
+  littleArcWindowId = windowId;
+  if (windowId === undefined) {
+    await browser.storage.session.remove(LITTLE_ARC_WINDOW_STORAGE_KEY);
+  } else {
+    await browser.storage.session.set({ [LITTLE_ARC_WINDOW_STORAGE_KEY]: windowId });
+  }
+}
+
+async function littleArcWindowBounds(sourceWindowId?: number) {
+  const [sourceWindow, displays] = await Promise.all([
+    sourceWindowId === undefined ? Promise.resolve(undefined) : browser.windows.get(sourceWindowId).catch(() => undefined),
+    browser.system.display.getInfo().catch(() => []),
+  ]);
+  const sourceWidth = sourceWindow?.width ?? LITTLE_ARC_FALLBACK_SIZE.width;
+  const sourceHeight = sourceWindow?.height ?? LITTLE_ARC_FALLBACK_SIZE.height;
+  const sourceLeft = sourceWindow?.left ?? 0;
+  const sourceTop = sourceWindow?.top ?? 0;
+  const sourceCenterX = sourceLeft + sourceWidth / 2;
+  const sourceCenterY = sourceTop + sourceHeight / 2;
+  const display = displays.find(({ workArea }) => (
+    sourceCenterX >= workArea.left && sourceCenterX < workArea.left + workArea.width &&
+    sourceCenterY >= workArea.top && sourceCenterY < workArea.top + workArea.height
+  )) ?? displays.find(({ isPrimary }) => isPrimary);
+  const workArea = display?.workArea;
+  const width = Math.min(Math.round(sourceWidth * LITTLE_ARC_WINDOW_SCALE), workArea?.width ?? sourceWidth);
+  const height = Math.min(Math.round(sourceHeight * LITTLE_ARC_WINDOW_SCALE), workArea?.height ?? sourceHeight);
+  const desiredLeft = Math.round(sourceLeft + (sourceWidth - width) / 2);
+  const desiredTop = Math.round(sourceTop + (sourceHeight - height) / 2);
+
+  return {
+    width,
+    height,
+    left: workArea ? Math.max(workArea.left, Math.min(desiredLeft, workArea.left + workArea.width - width)) : desiredLeft,
+    top: workArea ? Math.max(workArea.top, Math.min(desiredTop, workArea.top + workArea.height - height)) : desiredTop,
+  };
+}
+
+async function navigateLittleArc(windowId: number, url: string) {
+  await browser.windows.update(windowId, { focused: true });
+  const [activeTab] = await browser.tabs.query({ windowId, active: true });
+  if (activeTab?.id === undefined) throw new Error('Little Arc のアクティブタブが見つかりません。');
+  await browser.tabs.update(activeTab.id, { url, active: true });
+}
+
+async function openLittleArc(url: string, sourceWindowId?: number) {
+  const normalizedUrl = normalizeUrl(url);
+  const existingWindowId = await storedLittleArcWindowId();
+
+  if (existingWindowId !== undefined) {
+    try {
+      await navigateLittleArc(existingWindowId, normalizedUrl);
+      return;
+    } catch {
+      await rememberLittleArcWindow(undefined);
+    }
+  }
+
+  const littleArcWindow = await browser.windows.create({
+    url: normalizedUrl,
+    type: 'popup',
+    focused: true,
+    ...await littleArcWindowBounds(sourceWindowId),
+  });
+  if (littleArcWindow?.id !== undefined) await rememberLittleArcWindow(littleArcWindow.id);
+}
+
+async function closeLittleArcWindow() {
+  const windowId = await storedLittleArcWindowId();
+  if (windowId === undefined) return;
+
+  await rememberLittleArcWindow(undefined);
+  await browser.windows.remove(windowId).catch(() => undefined);
+}
+
+async function closeLittleArcWhenFocusLost(focusedWindowId: number) {
+  const windowId = await storedLittleArcWindowId();
+  if (windowId !== undefined && focusedWindowId !== windowId) await closeLittleArcWindow();
+}
+
 export default defineBackground(() => {
   browser.windows.onFocusChanged.addListener((windowId) => {
     if (commandBarWindowId !== undefined && windowId !== commandBarWindowId) {
       void closeCommandBarWindow();
     }
+    void closeLittleArcWhenFocusLost(windowId);
   });
 
   // Chromium の拡張機能ポップアップには、ネイティブウィンドウの移動・
@@ -309,6 +404,7 @@ export default defineBackground(() => {
       commandBarWindowId = undefined;
       commandBarWindowBounds = undefined;
     }
+    if (windowId === littleArcWindowId) void rememberLittleArcWindow(undefined);
   });
 
   browser.commands.onCommand.addListener(async (command) => {
@@ -327,8 +423,11 @@ export default defineBackground(() => {
     }
   });
 
-  browser.runtime.onMessage.addListener(async (message: CommandBarMessage, sender) => {
+  browser.runtime.onMessage.addListener(async (message: CommandBarMessage | LittleArcMessage, sender) => {
     switch (message.type) {
+      case 'little-arc:open':
+        await openLittleArc(message.url, sender.tab?.windowId);
+        return;
       case 'command-bar:search': return search(message.query, sender.tab?.id, sender.tab?.url);
       case 'command-bar:activate-tab':
         await browser.windows.update(message.windowId, { focused: true });

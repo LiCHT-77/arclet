@@ -1,9 +1,43 @@
+import type { LittleArcMessage } from '@/utils/little-arc';
+
 export default defineContentScript({
   matches: ['*://*/*'],
   main() {
     const hostId = 'arclet-command-bar-host';
     const hostStyleId = 'arclet-command-bar-host-style';
     let backdropSheet: CSSStyleSheet | undefined;
+
+    const openLittleArcFromClick = (event: MouseEvent) => {
+      if (
+        !event.isTrusted ||
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        !event.shiftKey ||
+        event.altKey ||
+        event.metaKey ||
+        event.ctrlKey ||
+        !(event.target instanceof Element)
+      ) return;
+
+      const link = event.target.closest('a[href]');
+      if (!link || link.hasAttribute('download')) return;
+
+      let url: URL;
+      try {
+        url = new URL(link.getAttribute('href')!, window.location.href);
+      } catch {
+        return;
+      }
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const message: LittleArcMessage = { type: 'little-arc:open', url: url.href };
+      void browser.runtime.sendMessage(message);
+    };
+
+    // ページのクリックハンドラより先に捕捉し、通常のリンク遷移を抑止する。
+    document.addEventListener('click', openLittleArcFromClick, true);
 
     const applyImportantStyles = (element: HTMLElement, styles: Record<string, string>) => {
       for (const [property, value] of Object.entries(styles)) {

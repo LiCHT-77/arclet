@@ -1,6 +1,8 @@
 import type { CommandBarMessage, CommandBarResults, CommandItem } from '@/utils/command-bar';
 
 const MAX_RESULTS = 50;
+const MAX_HISTORY_RESULTS_PER_DOMAIN = 3;
+const HISTORY_SEARCH_MAX_RESULTS = MAX_RESULTS * MAX_HISTORY_RESULTS_PER_DOMAIN;
 const COMMAND_BAR_WINDOW_SIZE = { width: 680, height: 560 };
 
 let commandBarWindowId: number | undefined;
@@ -33,11 +35,57 @@ function withoutDuplicateUrls(items: CommandItem[], seenUrls: Set<string>) {
   });
 }
 
+function historyPageKey(url: string) {
+  try {
+    const pageUrl = new URL(url);
+    // ページ内アンカーの移動は同一ページとして扱う。
+    pageUrl.hash = '';
+    pageUrl.hostname = pageUrl.hostname.replace(/^www\./i, '');
+    return pageUrl.href;
+  } catch {
+    return normalizeUrl(url);
+  }
+}
+
+function withoutDuplicateHistoryPages(items: CommandItem[]) {
+  const seenPageUrls = new Set<string>();
+  return items.filter((item) => {
+    const pageKey = historyPageKey(item.url);
+    if (seenPageUrls.has(pageKey)) return false;
+    seenPageUrls.add(pageKey);
+    return true;
+  });
+}
+
+function limitHistoryResultsPerDomain(items: CommandItem[]) {
+  const result: CommandItem[] = [];
+  const countsByDomain = new Map<string, number>();
+
+  for (const item of items) {
+    let domain: string;
+    try {
+      // www の有無で同じサイトの履歴が分散しないようにする。
+      domain = new URL(item.url).hostname.replace(/^www\./i, '');
+    } catch {
+      result.push(item);
+      continue;
+    }
+
+    const count = countsByDomain.get(domain) ?? 0;
+    if (count >= MAX_HISTORY_RESULTS_PER_DOMAIN) continue;
+
+    countsByDomain.set(domain, count + 1);
+    result.push(item);
+  }
+
+  return result;
+}
+
 async function search(query: string): Promise<CommandBarResults> {
   const [tabs, bookmarks, history] = await Promise.all([
     browser.tabs.query({}),
     browser.bookmarks.search(query),
-    browser.history.search({ text: query, maxResults: MAX_RESULTS, startTime: 0 }),
+    browser.history.search({ text: query, maxResults: HISTORY_SEARCH_MAX_RESULTS, startTime: 0 }),
   ]);
 
   const loweredQuery = query.trim().toLocaleLowerCase();
@@ -54,14 +102,16 @@ async function search(query: string): Promise<CommandBarResults> {
 
   const matchingHistory = history
     .filter((entry) => Boolean(entry.url))
-    .slice(0, MAX_RESULTS)
+    .slice(0, HISTORY_SEARCH_MAX_RESULTS)
     .map<CommandItem>((entry) => ({ id: `history:${entry.id}`, kind: 'history', title: titleFor(entry.url!, entry.title), url: entry.url!, subtitle: entry.url, faviconUrl: faviconUrlFor(entry.url!) }));
 
   const seenUrls = new Set<string>();
   return {
     tabs: withoutDuplicateUrls(matchingTabs, seenUrls),
     bookmarks: withoutDuplicateUrls(matchingBookmarks, seenUrls),
-    history: withoutDuplicateUrls(matchingHistory, seenUrls),
+    history: limitHistoryResultsPerDomain(
+      withoutDuplicateHistoryPages(withoutDuplicateUrls(matchingHistory, seenUrls)),
+    ).slice(0, MAX_RESULTS),
   };
 }
 

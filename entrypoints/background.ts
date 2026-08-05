@@ -12,6 +12,8 @@ const MAX_SEARCH_SUGGESTIONS = 3;
 const MAX_HISTORY_RESULTS_PER_DOMAIN = 3;
 const HISTORY_SEARCH_MAX_RESULTS = MAX_RESULTS * MAX_HISTORY_RESULTS_PER_DOMAIN;
 const LITTLE_ARC_WINDOW_STORAGE_KEY = 'littleArcWindowId';
+const COMMAND_BAR_HEIGHT_TRANSITION_DURATION_MS = 180;
+const COMMAND_BAR_HEIGHT_TRANSITION_FRAME_MS = 16;
 const LITTLE_ARC_CONTEXT_MENU_ID = 'open-link-in-little-arc';
 
 let commandBarWindowId: number | undefined;
@@ -20,6 +22,9 @@ let commandBarWindowMaxHeight: number | undefined;
 let pendingCommandBarWindowHeight: { contentHeight: number; frameHeight: number } | undefined;
 let openingCommandBarWindow = false;
 let restoringCommandBarBounds = false;
+let commandBarWindowHeightTransitionTimer: ReturnType<typeof setTimeout> | undefined;
+let commandBarWindowHeightTransitionId = 0;
+let transitioningCommandBarWindowHeight = false;
 let littleArcWindowId: number | undefined;
 let littleArcWindowBounds: { width: number; height: number; left?: number; top?: number } | undefined;
 let restoringLittleArcBounds = false;
@@ -242,12 +247,55 @@ async function openUrlInSameDomainTab(url: string) {
 
 async function closeCommandBarWindow() {
   if (commandBarWindowId === undefined) return;
+  stopCommandBarHeightTransition();
   const windowId = commandBarWindowId;
   commandBarWindowId = undefined;
   commandBarWindowBounds = undefined;
   commandBarWindowMaxHeight = undefined;
   pendingCommandBarWindowHeight = undefined;
   await browser.windows.remove(windowId).catch(() => undefined);
+}
+
+function stopCommandBarHeightTransition() {
+  commandBarWindowHeightTransitionId += 1;
+  transitioningCommandBarWindowHeight = false;
+  if (commandBarWindowHeightTransitionTimer !== undefined) {
+    clearTimeout(commandBarWindowHeightTransitionTimer);
+    commandBarWindowHeightTransitionTimer = undefined;
+  }
+}
+
+function transitionCommandBarHeight(targetHeight: number) {
+  if (commandBarWindowId === undefined || !commandBarWindowBounds) return;
+
+  stopCommandBarHeightTransition();
+  const transitionId = commandBarWindowHeightTransitionId;
+  const startBounds = commandBarWindowBounds;
+  const centerY = (startBounds.top ?? 0) + startBounds.height / 2;
+  const startTime = performance.now();
+  transitioningCommandBarWindowHeight = true;
+
+  const step = () => {
+    if (transitionId !== commandBarWindowHeightTransitionId || commandBarWindowId === undefined) return;
+
+    const progress = Math.min(1, (performance.now() - startTime) / COMMAND_BAR_HEIGHT_TRANSITION_DURATION_MS);
+    // 開始直後は素早く、終わり際はゆっくり収束させて高さの変化を自然に見せる。
+    const easedProgress = 1 - (1 - progress) ** 3;
+    const height = Math.round(startBounds.height + (targetHeight - startBounds.height) * easedProgress);
+    const nextBounds = { ...startBounds, height, top: Math.round(centerY - height / 2) };
+    commandBarWindowBounds = nextBounds;
+    void browser.windows.update(commandBarWindowId, nextBounds).catch(() => undefined);
+
+    if (progress < 1) {
+      commandBarWindowHeightTransitionTimer = setTimeout(step, COMMAND_BAR_HEIGHT_TRANSITION_FRAME_MS);
+      return;
+    }
+
+    commandBarWindowHeightTransitionTimer = undefined;
+    transitioningCommandBarWindowHeight = false;
+  };
+
+  step();
 }
 
 async function initialCommandBarWindowBounds() {
@@ -340,10 +388,7 @@ async function resizeCommandBarWindow(contentHeight: number, frameHeight: number
   );
   if (desiredHeight === current.height) return;
 
-  const centerY = (current.top ?? 0) + current.height / 2;
-  const nextBounds = { ...current, height: desiredHeight, top: Math.round(centerY - desiredHeight / 2) };
-  commandBarWindowBounds = nextBounds;
-  await browser.windows.update(commandBarWindowId, nextBounds).catch(() => undefined);
+  transitionCommandBarHeight(desiredHeight);
 }
 
 async function storedLittleArcWindowId() {
@@ -479,6 +524,7 @@ export default defineBackground(() => {
 
     if (
       !restoringCommandBarBounds &&
+      !transitioningCommandBarWindowHeight &&
       windowId === commandBarWindowId &&
       commandBarWindowBounds &&
       (window.width !== commandBarWindowBounds.width ||
@@ -511,6 +557,7 @@ export default defineBackground(() => {
 
   browser.windows.onRemoved.addListener((windowId) => {
     if (windowId === commandBarWindowId) {
+      stopCommandBarHeightTransition();
       commandBarWindowId = undefined;
       commandBarWindowBounds = undefined;
       commandBarWindowMaxHeight = undefined;

@@ -85,10 +85,12 @@ function ResultItem({ item, onSelect }: { item: CommandItem; onSelect: (item: Co
 function App() {
   const isStandaloneWindow = window.parent === window;
   const commandRef = useRef<HTMLDivElement>(null);
+  const commandContentRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<CommandBarResults>(emptyResults);
   const [selectedValue, setSelectedValue] = useState('');
+  const [iframeCommandHeight, setIframeCommandHeight] = useState<number>();
   const navigableUrl = useMemo(() => toNavigableUrl(query), [query]);
   const selectedItem = useMemo(() => (
     [...results.tabs, ...results.bookmarks, ...results.history]
@@ -182,6 +184,26 @@ function App() {
     };
   }, [isStandaloneWindow]);
 
+  useLayoutEffect(() => {
+    if (isStandaloneWindow || !commandContentRef.current) return;
+
+    const reportHeight = () => {
+      const contentHeight = commandContentRef.current?.getBoundingClientRect().height ?? 0;
+      const borderHeight = commandRef.current
+        ? commandRef.current.offsetHeight - commandRef.current.clientHeight
+        : 0;
+      const height = Math.ceil(contentHeight + borderHeight);
+      if (height) setIframeCommandHeight((current) => current === height ? current : height);
+    };
+
+    const observer = new ResizeObserver(reportHeight);
+    observer.observe(commandContentRef.current);
+    reportHeight();
+    return () => {
+      observer.disconnect();
+    };
+  }, [isStandaloneWindow]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -252,47 +274,49 @@ function App() {
     >
       <Command
         ref={commandRef}
-        className={`max-w-none overflow-hidden border border-slate-200 bg-white text-slate-800 shadow-2xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 ${isStandaloneWindow ? 'flex w-full flex-col rounded-none shadow-none' : 'w-[calc(100dvw*var(--arclet-command-bar-width-scale))] rounded-xl'}`}
-        style={isStandaloneWindow ? undefined : commandBarIframeScaleStyle}
+        className={`max-w-none overflow-hidden border border-slate-200 bg-white text-slate-800 shadow-2xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 ${isStandaloneWindow ? 'flex w-full flex-col rounded-none shadow-none' : 'w-[calc(100dvw*var(--arclet-command-bar-width-scale))] rounded-xl transition-[height] duration-200 ease-out'}`}
+        style={isStandaloneWindow ? undefined : { ...commandBarIframeScaleStyle, height: iframeCommandHeight ? `${iframeCommandHeight}px` : undefined }}
         shouldFilter={false}
         label="Arclet command bar"
         value={selectedValue}
         onValueChange={setSelectedValue}
         onKeyDownCapture={openInSameDomainTab}
       >
-        <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-4 dark:border-slate-700">
-          <Search className="size-5 shrink-0 stroke-2 text-slate-500 dark:text-slate-300" aria-hidden="true" />
-          <Command.Input
-            className="w-full min-w-0 border-0 bg-transparent text-base outline-none placeholder:text-slate-500 dark:placeholder:text-slate-300"
-            ref={inputRef}
-            autoFocus
-            value={query}
-            onValueChange={setQuery}
-            placeholder="タブ、ブックマーク、履歴を検索"
-          />
-          <kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs text-slate-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300">Esc</kbd>
+        <div ref={commandContentRef}>
+          <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-4 dark:border-slate-700">
+            <Search className="size-5 shrink-0 stroke-2 text-slate-500 dark:text-slate-300" aria-hidden="true" />
+            <Command.Input
+              className="w-full min-w-0 border-0 bg-transparent text-base outline-none placeholder:text-slate-500 dark:placeholder:text-slate-300"
+              ref={inputRef}
+              autoFocus
+              value={query}
+              onValueChange={setQuery}
+              placeholder="タブ、ブックマーク、履歴を検索"
+            />
+            <kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs text-slate-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300">Esc</kbd>
+          </div>
+          <Command.List className="max-h-96 overflow-auto p-2">
+            <Command.Empty className="p-7 text-center text-slate-500 dark:text-slate-300">候補が見つかりません</Command.Empty>
+            {[...results.tabs, ...results.bookmarks].map((item) => <ResultItem key={item.id} item={item} onSelect={selectItem} />)}
+            {navigableUrl && (
+              <Command.Item className="flex min-h-14 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 data-[selected=true]:bg-indigo-50 dark:data-[selected=true]:bg-slate-700" value={`url:${navigableUrl}`} onSelect={() => void run({ type: 'command-bar:open-url', url: navigableUrl })}>
+                <Icon kind="url" /><span className="grid min-w-0 flex-1 gap-1"><span className="truncate text-sm">{navigableUrl} を開く</span><span className="truncate text-xs text-slate-500 dark:text-slate-300">新規タブまたは既存のタブへ移動</span></span>
+              </Command.Item>
+            )}
+            {query.trim() && (
+              <Command.Item className="flex min-h-14 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 data-[selected=true]:bg-indigo-50 dark:data-[selected=true]:bg-slate-700" value={`search:${query.trim()}`} onSelect={() => void run({ type: 'command-bar:web-search', query: query.trim() })}>
+                <Icon kind="search" /><span className="grid min-w-0 flex-1 gap-1"><span className="truncate text-sm">「{query.trim()}」を検索</span><span className="truncate text-xs text-slate-500 dark:text-slate-300">ブラウザの既定検索エンジンを使用</span></span>
+              </Command.Item>
+            )}
+            {results.searchSuggestions.map((suggestion) => (
+              <Command.Item className="flex min-h-14 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 data-[selected=true]:bg-indigo-50 dark:data-[selected=true]:bg-slate-700" key={suggestion} value={`suggestion:${suggestion}`} onSelect={() => void run({ type: 'command-bar:web-search', query: suggestion })}>
+                <Icon kind="search" /><span className="grid min-w-0 flex-1 gap-1"><span className="truncate text-sm">{suggestion}</span><span className="truncate text-xs text-slate-500 dark:text-slate-300">検索候補</span></span>
+              </Command.Item>
+            ))}
+            {results.history.map((item) => <ResultItem key={item.id} item={item} onSelect={selectItem} />)}
+          </Command.List>
+          <footer className="flex gap-4 border-t border-slate-200 px-4 py-2.5 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-300"><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↑↓</kbd> 移動</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↵</kbd> 開く</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">Ctrl</kbd><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">X</kbd> タブを閉じる</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">⌘</kbd><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↵</kbd> 同一ドメインのタブで開く</span></footer>
         </div>
-        <Command.List className="max-h-96 overflow-auto p-2">
-          <Command.Empty className="p-7 text-center text-slate-500 dark:text-slate-300">候補が見つかりません</Command.Empty>
-          {[...results.tabs, ...results.bookmarks].map((item) => <ResultItem key={item.id} item={item} onSelect={selectItem} />)}
-          {navigableUrl && (
-            <Command.Item className="flex min-h-14 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 data-[selected=true]:bg-indigo-50 dark:data-[selected=true]:bg-slate-700" value={`url:${navigableUrl}`} onSelect={() => void run({ type: 'command-bar:open-url', url: navigableUrl })}>
-              <Icon kind="url" /><span className="grid min-w-0 flex-1 gap-1"><span className="truncate text-sm">{navigableUrl} を開く</span><span className="truncate text-xs text-slate-500 dark:text-slate-300">新規タブまたは既存のタブへ移動</span></span>
-            </Command.Item>
-          )}
-          {query.trim() && (
-            <Command.Item className="flex min-h-14 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 data-[selected=true]:bg-indigo-50 dark:data-[selected=true]:bg-slate-700" value={`search:${query.trim()}`} onSelect={() => void run({ type: 'command-bar:web-search', query: query.trim() })}>
-              <Icon kind="search" /><span className="grid min-w-0 flex-1 gap-1"><span className="truncate text-sm">「{query.trim()}」を検索</span><span className="truncate text-xs text-slate-500 dark:text-slate-300">ブラウザの既定検索エンジンを使用</span></span>
-            </Command.Item>
-          )}
-          {results.searchSuggestions.map((suggestion) => (
-            <Command.Item className="flex min-h-14 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 data-[selected=true]:bg-indigo-50 dark:data-[selected=true]:bg-slate-700" key={suggestion} value={`suggestion:${suggestion}`} onSelect={() => void run({ type: 'command-bar:web-search', query: suggestion })}>
-              <Icon kind="search" /><span className="grid min-w-0 flex-1 gap-1"><span className="truncate text-sm">{suggestion}</span><span className="truncate text-xs text-slate-500 dark:text-slate-300">検索候補</span></span>
-            </Command.Item>
-          ))}
-          {results.history.map((item) => <ResultItem key={item.id} item={item} onSelect={selectItem} />)}
-        </Command.List>
-        <footer className="flex gap-4 border-t border-slate-200 px-4 py-2.5 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-300"><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↑↓</kbd> 移動</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↵</kbd> 開く</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">Ctrl</kbd><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">X</kbd> タブを閉じる</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">⌘</kbd><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↵</kbd> 同一ドメインのタブで開く</span></footer>
       </Command>
     </main>
   );

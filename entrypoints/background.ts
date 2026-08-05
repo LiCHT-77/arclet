@@ -546,6 +546,9 @@ export default defineBackground(() => {
         await browser.windows.update(message.windowId, { focused: true });
         await browser.tabs.update(message.tabId, { active: true });
         return;
+      case 'command-bar:close-tab':
+        await browser.tabs.remove(message.tabId);
+        return;
       case 'command-bar:open-url': await openUrl(message.url); return;
       case 'command-bar:open-url-in-same-domain-tab': await openUrlInSameDomainTab(message.url); return;
       case 'command-bar:web-search':

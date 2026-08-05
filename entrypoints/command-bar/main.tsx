@@ -91,6 +91,10 @@ function App() {
   const [results, setResults] = useState<CommandBarResults>(emptyResults);
   const [selectedValue, setSelectedValue] = useState('');
   const [iframeCommandHeight, setIframeCommandHeight] = useState<number>();
+  const [isWindowVisible, setIsWindowVisible] = useState(false);
+  const [initialResultsLoaded, setInitialResultsLoaded] = useState(false);
+  const initialResultsLoadedRef = useRef(false);
+  const windowVisibleRef = useRef(false);
   const navigableUrl = useMemo(() => toNavigableUrl(query), [query]);
   const selectedItem = useMemo(() => (
     [...results.tabs, ...results.bookmarks, ...results.history]
@@ -118,8 +122,18 @@ function App() {
     const timeout = window.setTimeout(() => {
       void browser.runtime
         .sendMessage<CommandBarMessage, CommandBarResults>({ type: 'command-bar:search', query })
-        .then((nextResults) => { if (!cancelled) setResults(nextResults); })
-        .catch(() => { if (!cancelled) setResults(emptyResults); });
+        .then((nextResults) => {
+          if (cancelled) return;
+          setResults(nextResults);
+          initialResultsLoadedRef.current = true;
+          setInitialResultsLoaded(true);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setResults(emptyResults);
+          initialResultsLoadedRef.current = true;
+          setInitialResultsLoaded(true);
+        });
     }, 120);
 
     return () => {
@@ -147,6 +161,12 @@ function App() {
     return () => window.removeEventListener('message', onMessage);
   }, []);
 
+  useEffect(() => {
+    // popup は初期サイズの計測中に非表示にしているため、mount 時の autoFocus
+    // だけでは表示後にフォーカスが残らないことがある。
+    if (isStandaloneWindow && isWindowVisible) inputRef.current?.focus({ preventScroll: true });
+  }, [isStandaloneWindow, isWindowVisible]);
+
   useLayoutEffect(() => {
     if (!isStandaloneWindow || !commandRef.current) return;
 
@@ -154,17 +174,28 @@ function App() {
     let frame: number | undefined;
     const reportHeight = () => {
       frame = undefined;
+      // 結果取得前の空状態は表示しないため、その高さで popup を更新しない。
+      // 空状態→結果状態の更新競合が、表示直後の跳ねの原因になる。
+      if (!initialResultsLoadedRef.current && !windowVisibleRef.current) return;
       // scrollHeight は Command 自身の上下ボーダーを含まない。popup の
       // viewport をちょうど合わせると 2px 分だけ不足してスクロールバーが
       // 出るため、実際に描画される border-box の高さを送る。
       const contentHeight = Math.ceil(commandRef.current?.getBoundingClientRect().height ?? 0);
       if (!contentHeight || contentHeight === previousHeight) return;
       previousHeight = contentHeight;
+      // 初期検索の結果が反映された時点でだけ、アニメーションなしで最終高さを
+      // 適用する。これにより大きな初期 popup → 空状態 → 結果状態の変形を隠す。
+      const revealWindow = initialResultsLoadedRef.current && !windowVisibleRef.current;
       void browser.runtime.sendMessage<CommandBarMessage>({
         type: 'command-bar:resize-window',
         contentHeight,
         frameHeight: Math.max(0, window.outerHeight - window.innerHeight),
-      });
+        immediate: revealWindow,
+      }).then(() => {
+        if (!revealWindow) return;
+        windowVisibleRef.current = true;
+        setIsWindowVisible(true);
+      }).catch(() => undefined);
     };
 
     const observer = new ResizeObserver(reportHeight);
@@ -182,7 +213,7 @@ function App() {
       mutationObserver.disconnect();
       if (frame !== undefined) window.cancelAnimationFrame(frame);
     };
-  }, [isStandaloneWindow]);
+  }, [initialResultsLoaded, isStandaloneWindow]);
 
   useLayoutEffect(() => {
     if (isStandaloneWindow || !commandContentRef.current) return;
@@ -274,7 +305,7 @@ function App() {
     >
       <Command
         ref={commandRef}
-        className={`max-w-none overflow-hidden border border-slate-200 bg-white text-slate-800 shadow-2xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 ${isStandaloneWindow ? 'flex w-full flex-col rounded-none shadow-none' : 'w-[calc(100dvw*var(--arclet-command-bar-width-scale))] rounded-xl transition-[height] duration-200 ease-out'}`}
+        className={`max-w-none overflow-hidden border border-slate-200 bg-white text-slate-800 shadow-2xl dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 ${isStandaloneWindow ? `flex w-full flex-col rounded-none shadow-none transition-opacity duration-300 ease-out${isWindowVisible ? ' opacity-100' : ' invisible opacity-0'}` : 'w-[calc(100dvw*var(--arclet-command-bar-width-scale))] rounded-xl transition-[height] duration-200 ease-out'}`}
         style={isStandaloneWindow ? undefined : { ...commandBarIframeScaleStyle, height: iframeCommandHeight ? `${iframeCommandHeight}px` : undefined }}
         shouldFilter={false}
         label="Arclet command bar"

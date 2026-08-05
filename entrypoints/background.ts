@@ -14,12 +14,13 @@ const HISTORY_SEARCH_MAX_RESULTS = MAX_RESULTS * MAX_HISTORY_RESULTS_PER_DOMAIN;
 const LITTLE_ARC_WINDOW_STORAGE_KEY = 'littleArcWindowId';
 const COMMAND_BAR_HEIGHT_TRANSITION_DURATION_MS = 180;
 const COMMAND_BAR_HEIGHT_TRANSITION_FRAME_MS = 16;
+const INITIAL_COMMAND_BAR_WINDOW_HEIGHT = 240;
 const LITTLE_ARC_CONTEXT_MENU_ID = 'open-link-in-little-arc';
 
 let commandBarWindowId: number | undefined;
 let commandBarWindowBounds: { width: number; height: number; left?: number; top?: number } | undefined;
 let commandBarWindowMaxHeight: number | undefined;
-let pendingCommandBarWindowHeight: { contentHeight: number; frameHeight: number } | undefined;
+let pendingCommandBarWindowHeight: { contentHeight: number; frameHeight: number; immediate?: boolean } | undefined;
 let openingCommandBarWindow = false;
 let restoringCommandBarBounds = false;
 let commandBarWindowHeightTransitionTimer: ReturnType<typeof setTimeout> | undefined;
@@ -275,7 +276,7 @@ function transitionCommandBarHeight(targetHeight: number) {
   const startTime = performance.now();
   transitioningCommandBarWindowHeight = true;
 
-  const step = () => {
+  const step = async () => {
     if (transitionId !== commandBarWindowHeightTransitionId || commandBarWindowId === undefined) return;
 
     const progress = Math.min(1, (performance.now() - startTime) / COMMAND_BAR_HEIGHT_TRANSITION_DURATION_MS);
@@ -284,10 +285,13 @@ function transitionCommandBarHeight(targetHeight: number) {
     const height = Math.round(startBounds.height + (targetHeight - startBounds.height) * easedProgress);
     const nextBounds = { ...startBounds, height, top: Math.round(centerY - height / 2) };
     commandBarWindowBounds = nextBounds;
-    void browser.windows.update(commandBarWindowId, nextBounds).catch(() => undefined);
+    // windows.update を並行して投げると OS 側で古いサイズが後から反映され、
+    // 高さが跳ねて見えることがある。1 回の反映完了を待ってから次へ進める。
+    await browser.windows.update(commandBarWindowId, nextBounds).catch(() => undefined);
+    if (transitionId !== commandBarWindowHeightTransitionId || commandBarWindowId === undefined) return;
 
     if (progress < 1) {
-      commandBarWindowHeightTransitionTimer = setTimeout(step, COMMAND_BAR_HEIGHT_TRANSITION_FRAME_MS);
+      commandBarWindowHeightTransitionTimer = setTimeout(() => { void step(); }, COMMAND_BAR_HEIGHT_TRANSITION_FRAME_MS);
       return;
     }
 
@@ -295,7 +299,22 @@ function transitionCommandBarHeight(targetHeight: number) {
     transitioningCommandBarWindowHeight = false;
   };
 
-  step();
+  void step();
+}
+
+async function setCommandBarHeightImmediately(targetHeight: number) {
+  if (commandBarWindowId === undefined || !commandBarWindowBounds) return;
+
+  stopCommandBarHeightTransition();
+  const currentBounds = commandBarWindowBounds;
+  const centerY = (currentBounds.top ?? 0) + currentBounds.height / 2;
+  const nextBounds = {
+    ...currentBounds,
+    height: targetHeight,
+    top: Math.round(centerY - targetHeight / 2),
+  };
+  commandBarWindowBounds = nextBounds;
+  await browser.windows.update(commandBarWindowId, nextBounds).catch(() => undefined);
 }
 
 async function initialCommandBarWindowBounds() {
@@ -321,13 +340,17 @@ async function initialCommandBarWindowBounds() {
   const sourceLeft = focusedWindow?.left ?? workArea!.left;
   const sourceTop = focusedWindow?.top ?? workArea!.top;
   const width = Math.min(Math.round(sourceWidth * COMMAND_BAR_WINDOW_WIDTH_SCALE), workArea?.width ?? sourceWidth);
-  const height = Math.min(Math.round(sourceHeight * COMMAND_BAR_WINDOW_HEIGHT_SCALE), workArea?.height ?? sourceHeight);
+  const maxHeight = Math.min(Math.round(sourceHeight * COMMAND_BAR_WINDOW_HEIGHT_SCALE), workArea?.height ?? sourceHeight);
+  const height = Math.min(maxHeight, INITIAL_COMMAND_BAR_WINDOW_HEIGHT);
   const desiredLeft = Math.round(sourceLeft + (sourceWidth - width) / 2);
   const desiredTop = Math.round(sourceTop + (sourceHeight - height) / 2);
 
   return {
     width,
-    height,
+    // 初期 DOM は検索結果の取得前なので、画面比の最大高で開くと一度大きく
+    // 見えてから縮む。暫定値で作成し、実測後に最大高まで伸ばせるようにする。
+    height: Math.min(height, INITIAL_COMMAND_BAR_WINDOW_HEIGHT),
+    maxHeight,
     left: workArea ? Math.max(workArea.left, Math.min(desiredLeft, workArea.left + workArea.width - width)) : desiredLeft,
     top: workArea ? Math.max(workArea.top, Math.min(desiredTop, workArea.top + workArea.height - height)) : desiredTop,
   };
@@ -343,12 +366,13 @@ async function openCommandBarWindow() {
   }
 
   const initialBounds = await initialCommandBarWindowBounds();
+  const { maxHeight: initialMaxHeight, ...windowInitialBounds } = initialBounds ?? {};
   openingCommandBarWindow = true;
   const commandWindow = await browser.windows.create({
     url: browser.runtime.getURL('/command-bar.html'),
     type: 'popup',
     focused: true,
-    ...initialBounds,
+    ...windowInitialBounds,
   }).catch(() => undefined);
   openingCommandBarWindow = false;
   if (!commandWindow?.id) {
@@ -359,7 +383,7 @@ async function openCommandBarWindow() {
   const width = commandWindow.width ?? initialBounds?.width;
   const height = commandWindow.height ?? initialBounds?.height;
   commandBarWindowId = commandWindow.id;
-  commandBarWindowMaxHeight = initialBounds?.height;
+  commandBarWindowMaxHeight = initialMaxHeight;
   commandBarWindowBounds = width === undefined || height === undefined
     ? undefined
     : { width, height, left: commandWindow.left, top: commandWindow.top };
@@ -367,17 +391,17 @@ async function openCommandBarWindow() {
   // command-bar.html は windows.create() の完了前に読み込みを終え、最初の
   // サイズ通知を送ることがある。その通知を取りこぼさずに反映する。
   if (pendingCommandBarWindowHeight) {
-    const { contentHeight, frameHeight } = pendingCommandBarWindowHeight;
+    const { contentHeight, frameHeight, immediate } = pendingCommandBarWindowHeight;
     pendingCommandBarWindowHeight = undefined;
-    await resizeCommandBarWindow(contentHeight, frameHeight);
+    await resizeCommandBarWindow(contentHeight, frameHeight, immediate);
   }
 }
 
-async function resizeCommandBarWindow(contentHeight: number, frameHeight: number) {
+async function resizeCommandBarWindow(contentHeight: number, frameHeight: number, immediate = false) {
   if (commandBarWindowId === undefined || !commandBarWindowBounds || !commandBarWindowMaxHeight) {
     // ポップアップの DOM が起動済みでも、background 側ではまだ生成結果を
     // 受け取っていない場合がある。生成完了時に一度だけ適用する。
-    if (openingCommandBarWindow) pendingCommandBarWindowHeight = { contentHeight, frameHeight };
+    if (openingCommandBarWindow) pendingCommandBarWindowHeight = { contentHeight, frameHeight, immediate };
     return;
   }
 
@@ -388,6 +412,10 @@ async function resizeCommandBarWindow(contentHeight: number, frameHeight: number
   );
   if (desiredHeight === current.height) return;
 
+  if (immediate) {
+    await setCommandBarHeightImmediately(desiredHeight);
+    return;
+  }
   transitionCommandBarHeight(desiredHeight);
 }
 
@@ -602,7 +630,7 @@ export default defineBackground(() => {
         await browser.search.query({ text: message.query, disposition: 'NEW_TAB' });
         return;
       case 'command-bar:resize-window':
-        await resizeCommandBarWindow(message.contentHeight, message.frameHeight);
+        await resizeCommandBarWindow(message.contentHeight, message.frameHeight, message.immediate);
         return;
       case 'command-bar:close-popup':
         await closeCommandBarWindow();

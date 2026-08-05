@@ -17,6 +17,8 @@ const LITTLE_ARC_CONTEXT_MENU_ID = 'open-link-in-little-arc';
 let commandBarWindowId: number | undefined;
 let commandBarWindowBounds: { width: number; height: number; left?: number; top?: number } | undefined;
 let commandBarWindowMaxHeight: number | undefined;
+let pendingCommandBarWindowHeight: { contentHeight: number; frameHeight: number } | undefined;
+let openingCommandBarWindow = false;
 let restoringCommandBarBounds = false;
 let littleArcWindowId: number | undefined;
 let littleArcWindowBounds: { width: number; height: number; left?: number; top?: number } | undefined;
@@ -244,6 +246,7 @@ async function closeCommandBarWindow() {
   commandBarWindowId = undefined;
   commandBarWindowBounds = undefined;
   commandBarWindowMaxHeight = undefined;
+  pendingCommandBarWindowHeight = undefined;
   await browser.windows.remove(windowId).catch(() => undefined);
 }
 
@@ -292,13 +295,18 @@ async function openCommandBarWindow() {
   }
 
   const initialBounds = await initialCommandBarWindowBounds();
+  openingCommandBarWindow = true;
   const commandWindow = await browser.windows.create({
     url: browser.runtime.getURL('/command-bar.html'),
     type: 'popup',
     focused: true,
     ...initialBounds,
-  });
-  if (!commandWindow?.id) return;
+  }).catch(() => undefined);
+  openingCommandBarWindow = false;
+  if (!commandWindow?.id) {
+    pendingCommandBarWindowHeight = undefined;
+    return;
+  }
 
   const width = commandWindow.width ?? initialBounds?.width;
   const height = commandWindow.height ?? initialBounds?.height;
@@ -307,10 +315,23 @@ async function openCommandBarWindow() {
   commandBarWindowBounds = width === undefined || height === undefined
     ? undefined
     : { width, height, left: commandWindow.left, top: commandWindow.top };
+
+  // command-bar.html は windows.create() の完了前に読み込みを終え、最初の
+  // サイズ通知を送ることがある。その通知を取りこぼさずに反映する。
+  if (pendingCommandBarWindowHeight) {
+    const { contentHeight, frameHeight } = pendingCommandBarWindowHeight;
+    pendingCommandBarWindowHeight = undefined;
+    await resizeCommandBarWindow(contentHeight, frameHeight);
+  }
 }
 
 async function resizeCommandBarWindow(contentHeight: number, frameHeight: number) {
-  if (commandBarWindowId === undefined || !commandBarWindowBounds || !commandBarWindowMaxHeight) return;
+  if (commandBarWindowId === undefined || !commandBarWindowBounds || !commandBarWindowMaxHeight) {
+    // ポップアップの DOM が起動済みでも、background 側ではまだ生成結果を
+    // 受け取っていない場合がある。生成完了時に一度だけ適用する。
+    if (openingCommandBarWindow) pendingCommandBarWindowHeight = { contentHeight, frameHeight };
+    return;
+  }
 
   const current = commandBarWindowBounds;
   const desiredHeight = Math.min(
@@ -493,6 +514,7 @@ export default defineBackground(() => {
       commandBarWindowId = undefined;
       commandBarWindowBounds = undefined;
       commandBarWindowMaxHeight = undefined;
+      pendingCommandBarWindowHeight = undefined;
     }
     if (windowId === littleArcWindowId) void rememberLittleArcWindow(undefined);
     if (windowId === littleArcWindowId) littleArcWindowBounds = undefined;

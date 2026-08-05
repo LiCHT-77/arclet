@@ -149,8 +149,13 @@ function App() {
     if (!isStandaloneWindow || !commandRef.current) return;
 
     let previousHeight = 0;
+    let frame: number | undefined;
     const reportHeight = () => {
-      const contentHeight = Math.ceil(commandRef.current?.scrollHeight ?? 0);
+      frame = undefined;
+      // scrollHeight は Command 自身の上下ボーダーを含まない。popup の
+      // viewport をちょうど合わせると 2px 分だけ不足してスクロールバーが
+      // 出るため、実際に描画される border-box の高さを送る。
+      const contentHeight = Math.ceil(commandRef.current?.getBoundingClientRect().height ?? 0);
       if (!contentHeight || contentHeight === previousHeight) return;
       previousHeight = contentHeight;
       void browser.runtime.sendMessage<CommandBarMessage>({
@@ -162,8 +167,19 @@ function App() {
 
     const observer = new ResizeObserver(reportHeight);
     observer.observe(commandRef.current);
+    // ResizeObserver は子要素の追加で親自身の border-box が変わらない場合に
+    // 通知しないことがあるため、候補の差し替えも監視して再計測する。
+    const mutationObserver = new MutationObserver(() => {
+      if (frame !== undefined) return;
+      frame = window.requestAnimationFrame(reportHeight);
+    });
+    mutationObserver.observe(commandRef.current, { childList: true, subtree: true, characterData: true });
     reportHeight();
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      mutationObserver.disconnect();
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+    };
   }, [isStandaloneWindow]);
 
   useEffect(() => {

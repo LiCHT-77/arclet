@@ -28,6 +28,8 @@ let restoringCommandBarBounds = false;
 let commandBarWindowHeightTransitionTimer: ReturnType<typeof setTimeout> | undefined;
 let commandBarWindowHeightTransitionId = 0;
 let transitioningCommandBarWindowHeight = false;
+let lastCommandBarShortcutAt = 0;
+const COMMAND_BAR_SHORTCUT_REPEAT_GUARD_MS = 250;
 let littleArcWindowId: number | undefined;
 let littleArcWindowBounds: { width: number; height: number; left?: number; top?: number } | undefined;
 let restoringLittleArcBounds = false;
@@ -623,6 +625,16 @@ export default defineBackground(() => {
 
   browser.commands.onCommand.addListener(async (command) => {
     if (command !== 'toggle-command-bar') return;
+
+    // commands API はキーリピートも個別のコマンドとして通知する。押下中の
+    // 連続通知をそのまま toggle すると、表示と非表示が交互に切り替わる。
+    const now = Date.now();
+    if (now - lastCommandBarShortcutAt < COMMAND_BAR_SHORTCUT_REPEAT_GUARD_MS) {
+      lastCommandBarShortcutAt = now;
+      return;
+    }
+    lastCommandBarShortcutAt = now;
+
     const [activeTab] = await browser.tabs.query({ active: true, lastFocusedWindow: true });
     if (activeTab?.id === undefined) {
       await openCommandBarWindow(activeTab?.windowId);

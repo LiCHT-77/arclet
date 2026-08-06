@@ -56,22 +56,16 @@ export default defineContentScript({
 
     // iframe 版は同じブラウザウィンドウ内に描画されるため、background の
     // windows.onFocusChanged ではタブ切り替えを検知できない。埋め込み先の
-    // ページが非表示、またはブラウザのフォーカスを失ったときに閉じる。
+    // ページが非表示になったときに閉じる。
     const closeWhenPageLosesFocus = () => {
       if (!document.getElementById(hostId)) return;
 
-      // visibilitychange はタブ切り替え時に発火する。iframe へフォーカスを
-      // 移しただけではページ自体は hidden にならない。
+      // visibilitychange はタブ切り替え時に発火する。iframe へのフォーカス
+      // 移動で発火する window の blur は、コマンドバー自身を閉じてしまうため
+      // 監視しない。
       if (document.visibilityState === 'hidden') {
         close();
-        return;
       }
-
-      // blur は iframe にフォーカスを渡す際にも起こり得るため、次のタスクで
-      // hasFocus を確認してから閉じる。
-      window.setTimeout(() => {
-        if (document.getElementById(hostId) && !document.hasFocus()) close();
-      }, 0);
     };
 
     const open = () => {
@@ -167,7 +161,6 @@ export default defineContentScript({
     });
 
     document.addEventListener('visibilitychange', closeWhenPageLosesFocus);
-    window.addEventListener('blur', closeWhenPageLosesFocus);
 
     browser.runtime.onMessage.addListener((message: unknown) => {
       const command = message as { type?: string; url?: string };

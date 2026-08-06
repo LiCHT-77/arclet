@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Command } from 'cmdk';
-import { Bookmark, ExternalLink, Globe, History, PanelsTopLeft, Search } from 'lucide-react';
+import { Bookmark, Command as CommandIcon, ExternalLink, Globe, History, PanelsTopLeft, Search } from 'lucide-react';
 import type { CommandBarMessage, CommandBarResults, CommandItem } from '@/utils/command-bar';
 import { COMMAND_BAR_WINDOW_WIDTH_SCALE } from '@/utils/window-layout';
 import './style.css';
@@ -62,7 +62,7 @@ const sourceLabel: Record<CommandItem['kind'], string> = {
   history: '履歴',
 };
 
-function ResultItem({ item, onSelect }: { item: CommandItem; onSelect: (item: CommandItem) => void }) {
+function ResultItem({ item, onSelect, showTabNumber }: { item: CommandItem; onSelect: (item: CommandItem) => void; showTabNumber: boolean }) {
   return (
     <Command.Item
       className="flex min-h-14 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 data-[selected=true]:bg-indigo-50 dark:data-[selected=true]:bg-slate-700"
@@ -75,8 +75,15 @@ function ResultItem({ item, onSelect }: { item: CommandItem; onSelect: (item: Co
         <span className="truncate text-xs text-slate-500 dark:text-slate-300">{item.subtitle ?? item.url}</span>
       </span>
       <span className="flex shrink-0 items-center gap-1 text-xs text-slate-500 dark:text-slate-300" aria-label={sourceLabel[item.kind]} title={sourceLabel[item.kind]}>
-        {item.kind === 'tab' && <span>switch tab</span>}
-        <Icon kind={item.kind} className="size-4 text-slate-500 dark:text-slate-300" />
+        {item.kind === 'tab' && showTabNumber && item.tabNumber !== undefined
+          ? <span className="flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 font-medium text-indigo-700 dark:border-indigo-400/40 dark:bg-indigo-400/10 dark:text-indigo-200" aria-label={`⌘${item.tabNumber} でタブへ移動`}>
+            <CommandIcon className="size-3.5 stroke-2" aria-hidden="true" />
+            <span>{item.tabNumber}</span>
+          </span>
+          : <>
+            {item.kind === 'tab' && <span>switch tab</span>}
+            <Icon kind={item.kind} className="size-4 text-slate-500 dark:text-slate-300" />
+          </>}
       </span>
     </Command.Item>
   );
@@ -93,6 +100,7 @@ function App() {
   const [iframeCommandHeight, setIframeCommandHeight] = useState<number>();
   const [isWindowVisible, setIsWindowVisible] = useState(false);
   const [initialResultsLoaded, setInitialResultsLoaded] = useState(false);
+  const [isMetaKeyPressed, setIsMetaKeyPressed] = useState(false);
   const initialResultsLoadedRef = useRef(false);
   const windowVisibleRef = useRef(false);
   const navigableUrl = useMemo(() => toNavigableUrl(query), [query]);
@@ -237,6 +245,8 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Meta') setIsMetaKeyPressed(true);
+
       if (event.key === 'Escape') {
         event.preventDefault();
         close();
@@ -265,8 +275,18 @@ function App() {
           });
       }
     };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === 'Meta') setIsMetaKeyPressed(false);
+    };
+    const resetMetaKey = () => setIsMetaKeyPressed(false);
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', resetMetaKey);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', resetMetaKey);
+    };
   }, [selectedItem]);
 
   const run = async (message: CommandBarMessage) => {
@@ -298,6 +318,25 @@ function App() {
     void run({ type: 'command-bar:open-url-in-same-domain-tab', url });
   };
 
+  useEffect(() => {
+    if (!isStandaloneWindow) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.metaKey || event.ctrlKey || event.altKey || !/^[1-9]$/.test(event.key)) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      void browser.runtime
+        .sendMessage<CommandBarMessage>({ type: 'command-bar:activate-tab-shortcut', shortcutNumber: Number(event.key) })
+        .then(close)
+        .catch(() => undefined);
+    };
+
+    // cmdk や入力欄より先に捕捉し、ブラウザウィンドウ自身のタブ操作を抑止する。
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [isStandaloneWindow]);
+
   return (
     <main
       className={`bg-transparent font-sans ${isStandaloneWindow ? 'block w-full' : 'flex min-h-dvh w-dvw items-start justify-center px-5 pt-24 pb-5'}`}
@@ -328,7 +367,7 @@ function App() {
           </div>
           <Command.List className="max-h-96 overflow-auto p-2">
             <Command.Empty className="p-7 text-center text-slate-500 dark:text-slate-300">候補が見つかりません</Command.Empty>
-            {[...results.tabs, ...results.bookmarks].map((item) => <ResultItem key={item.id} item={item} onSelect={selectItem} />)}
+            {[...results.tabs, ...results.bookmarks].map((item) => <ResultItem key={item.id} item={item} onSelect={selectItem} showTabNumber={isMetaKeyPressed} />)}
             {navigableUrl && (
               <Command.Item className="flex min-h-14 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 data-[selected=true]:bg-indigo-50 dark:data-[selected=true]:bg-slate-700" value={`url:${navigableUrl}`} onSelect={() => void run({ type: 'command-bar:open-url', url: navigableUrl })}>
                 <Icon kind="url" /><span className="grid min-w-0 flex-1 gap-1"><span className="truncate text-sm">{navigableUrl} を開く</span><span className="truncate text-xs text-slate-500 dark:text-slate-300">新規タブまたは既存のタブへ移動</span></span>
@@ -344,7 +383,7 @@ function App() {
                 <Icon kind="search" /><span className="grid min-w-0 flex-1 gap-1"><span className="truncate text-sm">{suggestion}</span><span className="truncate text-xs text-slate-500 dark:text-slate-300">検索候補</span></span>
               </Command.Item>
             ))}
-            {results.history.map((item) => <ResultItem key={item.id} item={item} onSelect={selectItem} />)}
+            {results.history.map((item) => <ResultItem key={item.id} item={item} onSelect={selectItem} showTabNumber={isMetaKeyPressed} />)}
           </Command.List>
           <footer className="flex gap-4 border-t border-slate-200 px-4 py-2.5 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-300"><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↑↓</kbd> 移動</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↵</kbd> 開く</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">Ctrl</kbd><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">X</kbd> タブを閉じる</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">⌘</kbd><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↵</kbd> 同一ドメインのタブで開く</span></footer>
         </div>

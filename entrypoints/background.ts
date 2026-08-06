@@ -18,6 +18,8 @@ const INITIAL_COMMAND_BAR_WINDOW_HEIGHT = 240;
 const LITTLE_ARC_CONTEXT_MENU_ID = 'open-link-in-little-arc';
 
 let commandBarWindowId: number | undefined;
+// 独立ウィンドウのコマンドバーが操作する、呼び出し元のブラウザウィンドウ。
+let commandBarSourceWindowId: number | undefined;
 let commandBarWindowBounds: { width: number; height: number; left?: number; top?: number } | undefined;
 let commandBarWindowMaxHeight: number | undefined;
 let pendingCommandBarWindowHeight: { contentHeight: number; frameHeight: number; immediate?: boolean } | undefined;
@@ -150,7 +152,7 @@ async function searchSuggestions(query: string): Promise<string[]> {
   }
 }
 
-async function search(query: string, excludedTabId?: number, excludedUrl?: string): Promise<CommandBarResults> {
+async function search(query: string, excludedTabId?: number, excludedUrl?: string, shortcutWindowId?: number): Promise<CommandBarResults> {
   const loweredQuery = query.trim().toLocaleLowerCase();
   const [tabs, bookmarks, history, suggestions] = await Promise.all([
     browser.tabs.query({}),
@@ -169,7 +171,26 @@ async function search(query: string, excludedTabId?: number, excludedUrl?: strin
     .filter((tab) => tab.id !== excludedTabId && !isArcletInternalPage(tab.url))
     .filter((tab) => !loweredQuery || `${tab.title} ${tab.url}`.toLocaleLowerCase().includes(loweredQuery))
     .slice(0, MAX_RESULTS)
-    .map<CommandItem>((tab) => ({ id: `tab:${tab.id}`, kind: 'tab', title: titleFor(tab.url!, tab.title), url: tab.url!, subtitle: tab.url, faviconUrl: faviconUrlFor(tab.url!), tabId: tab.id!, windowId: tab.windowId! }));
+    .map<CommandItem>((tab) => ({
+      id: `tab:${tab.id}`,
+      kind: 'tab',
+      title: titleFor(tab.url!, tab.title),
+      url: tab.url!,
+      subtitle: tab.url,
+      faviconUrl: faviconUrlFor(tab.url!),
+      tabId: tab.id!,
+      windowId: tab.windowId!,
+      // Chromium の ⌘1〜⌘8 は先頭から、⌘9 は最後のタブを指す。
+      // 独立ウィンドウでは、呼び出し元以外のウィンドウにショートカットを
+      // 表示しても移動先が曖昧になるため番号を出さない。
+      tabNumber: tab.windowId !== shortcutWindowId
+        ? undefined
+        : tab.index < 8
+          ? tab.index + 1
+          : tab.index === Math.max(...tabs.filter((candidate) => candidate.windowId === shortcutWindowId).map((candidate) => candidate.index))
+            ? 9
+            : undefined,
+    }));
 
   const matchingBookmarks = bookmarks
     .filter((bookmark) => Boolean(bookmark.url))
@@ -251,6 +272,7 @@ async function closeCommandBarWindow() {
   stopCommandBarHeightTransition();
   const windowId = commandBarWindowId;
   commandBarWindowId = undefined;
+  commandBarSourceWindowId = undefined;
   commandBarWindowBounds = undefined;
   commandBarWindowMaxHeight = undefined;
   pendingCommandBarWindowHeight = undefined;
@@ -317,9 +339,11 @@ async function setCommandBarHeightImmediately(targetHeight: number) {
   await browser.windows.update(commandBarWindowId, nextBounds).catch(() => undefined);
 }
 
-async function initialCommandBarWindowBounds() {
+async function initialCommandBarWindowBounds(sourceWindowId?: number) {
   const [focusedWindow, displays] = await Promise.all([
-    browser.windows.getLastFocused().catch(() => undefined),
+    sourceWindowId === undefined
+      ? browser.windows.getLastFocused().catch(() => undefined)
+      : browser.windows.get(sourceWindowId).catch(() => undefined),
     browser.system.display.getInfo().catch(() => []),
   ]);
   const hasFocusedWindowBounds = focusedWindow?.width !== undefined && focusedWindow.height !== undefined;
@@ -356,7 +380,7 @@ async function initialCommandBarWindowBounds() {
   };
 }
 
-async function openCommandBarWindow() {
+async function openCommandBarWindow(sourceWindowId?: number) {
   if (commandBarWindowId !== undefined) {
     await browser.windows.update(commandBarWindowId, { focused: true }).catch(() => {
       commandBarWindowId = undefined;
@@ -365,7 +389,7 @@ async function openCommandBarWindow() {
     if (commandBarWindowId !== undefined) return;
   }
 
-  const initialBounds = await initialCommandBarWindowBounds();
+  const initialBounds = await initialCommandBarWindowBounds(sourceWindowId);
   const { maxHeight: initialMaxHeight, ...windowInitialBounds } = initialBounds ?? {};
   openingCommandBarWindow = true;
   const commandWindow = await browser.windows.create({
@@ -383,6 +407,7 @@ async function openCommandBarWindow() {
   const width = commandWindow.width ?? initialBounds?.width;
   const height = commandWindow.height ?? initialBounds?.height;
   commandBarWindowId = commandWindow.id;
+  commandBarSourceWindowId = sourceWindowId;
   commandBarWindowMaxHeight = initialMaxHeight;
   commandBarWindowBounds = width === undefined || height === undefined
     ? undefined
@@ -587,6 +612,7 @@ export default defineBackground(() => {
     if (windowId === commandBarWindowId) {
       stopCommandBarHeightTransition();
       commandBarWindowId = undefined;
+      commandBarSourceWindowId = undefined;
       commandBarWindowBounds = undefined;
       commandBarWindowMaxHeight = undefined;
       pendingCommandBarWindowHeight = undefined;
@@ -599,7 +625,7 @@ export default defineBackground(() => {
     if (command !== 'toggle-command-bar') return;
     const [activeTab] = await browser.tabs.query({ active: true, lastFocusedWindow: true });
     if (activeTab?.id === undefined) {
-      await openCommandBarWindow();
+      await openCommandBarWindow(activeTab?.windowId);
       return;
     }
     try {
@@ -607,7 +633,7 @@ export default defineBackground(() => {
     } catch {
       // ブラウザ内部ページなど、コンテンツスクリプトを注入できないページでは
       // 独立した小窓でコマンドバーを表示する。
-      await openCommandBarWindow();
+      await openCommandBarWindow(activeTab.windowId);
     }
   });
 
@@ -616,11 +642,31 @@ export default defineBackground(() => {
       case 'little-arc:open':
         await openLittleArc(message.url, sender.tab?.windowId);
         return;
-      case 'command-bar:search': return search(message.query, sender.tab?.id, sender.tab?.url);
+      case 'command-bar:search': return search(
+        message.query,
+        sender.tab?.id,
+        sender.tab?.url,
+        sender.tab?.windowId === commandBarWindowId
+          ? commandBarSourceWindowId
+          : sender.tab?.windowId,
+      );
       case 'command-bar:activate-tab':
         await browser.windows.update(message.windowId, { focused: true });
         await browser.tabs.update(message.tabId, { active: true });
         return;
+      case 'command-bar:activate-tab-shortcut': {
+        if (commandBarSourceWindowId === undefined) return;
+        const tabs = (await browser.tabs.query({ windowId: commandBarSourceWindowId }))
+          .filter((tab) => tab.id !== undefined)
+          .sort((left, right) => left.index - right.index);
+        const target = message.shortcutNumber === 9
+          ? tabs.at(-1)
+          : tabs[message.shortcutNumber - 1];
+        if (!target?.id) return;
+        await browser.windows.update(commandBarSourceWindowId, { focused: true });
+        await browser.tabs.update(target.id, { active: true });
+        return;
+      }
       case 'command-bar:close-tab':
         await browser.tabs.remove(message.tabId);
         return;

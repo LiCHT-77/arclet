@@ -12,10 +12,12 @@ const MAX_SEARCH_SUGGESTIONS = 3;
 const MAX_HISTORY_RESULTS_PER_DOMAIN = 3;
 const HISTORY_SEARCH_MAX_RESULTS = MAX_RESULTS * MAX_HISTORY_RESULTS_PER_DOMAIN;
 const LITTLE_ARC_WINDOW_STORAGE_KEY = 'littleArcWindowId';
+const LITTLE_ARC_SOURCE_WINDOW_STORAGE_KEY = 'littleArcSourceWindowId';
 const COMMAND_BAR_HEIGHT_TRANSITION_DURATION_MS = 180;
 const COMMAND_BAR_HEIGHT_TRANSITION_FRAME_MS = 16;
 const INITIAL_COMMAND_BAR_WINDOW_HEIGHT = 240;
 const LITTLE_ARC_CONTEXT_MENU_ID = 'open-link-in-little-arc';
+const PROMOTE_LITTLE_ARC_CONTEXT_MENU_ID = 'promote-little-arc-to-tab';
 
 let commandBarWindowId: number | undefined;
 // 独立ウィンドウのコマンドバーが操作する、呼び出し元のブラウザウィンドウ。
@@ -31,6 +33,7 @@ let transitioningCommandBarWindowHeight = false;
 let lastCommandBarShortcutAt = 0;
 const COMMAND_BAR_SHORTCUT_REPEAT_GUARD_MS = 250;
 let littleArcWindowId: number | undefined;
+let littleArcSourceWindowId: number | undefined;
 let littleArcWindowBounds: { width: number; height: number; left?: number; top?: number } | undefined;
 let restoringLittleArcBounds = false;
 // 固定タブから target=_blank や ⌘/Ctrl+クリックで生成されたタブを記録する。
@@ -458,18 +461,30 @@ async function resizeCommandBarWindow(contentHeight: number, frameHeight: number
 async function storedLittleArcWindowId() {
   if (littleArcWindowId !== undefined) return littleArcWindowId;
 
-  const stored = await browser.storage.session.get(LITTLE_ARC_WINDOW_STORAGE_KEY);
+  const stored = await browser.storage.session.get([
+    LITTLE_ARC_WINDOW_STORAGE_KEY,
+    LITTLE_ARC_SOURCE_WINDOW_STORAGE_KEY,
+  ]);
   const windowId = stored[LITTLE_ARC_WINDOW_STORAGE_KEY];
   if (typeof windowId === 'number') littleArcWindowId = windowId;
+  const sourceWindowId = stored[LITTLE_ARC_SOURCE_WINDOW_STORAGE_KEY];
+  if (typeof sourceWindowId === 'number') littleArcSourceWindowId = sourceWindowId;
   return littleArcWindowId;
 }
 
-async function rememberLittleArcWindow(windowId: number | undefined) {
+async function rememberLittleArcWindow(windowId: number | undefined, sourceWindowId?: number) {
   littleArcWindowId = windowId;
+  littleArcSourceWindowId = sourceWindowId;
   if (windowId === undefined) {
-    await browser.storage.session.remove(LITTLE_ARC_WINDOW_STORAGE_KEY);
+    await browser.storage.session.remove([
+      LITTLE_ARC_WINDOW_STORAGE_KEY,
+      LITTLE_ARC_SOURCE_WINDOW_STORAGE_KEY,
+    ]);
   } else {
-    await browser.storage.session.set({ [LITTLE_ARC_WINDOW_STORAGE_KEY]: windowId });
+    await browser.storage.session.set({
+      [LITTLE_ARC_WINDOW_STORAGE_KEY]: windowId,
+      ...(sourceWindowId === undefined ? {} : { [LITTLE_ARC_SOURCE_WINDOW_STORAGE_KEY]: sourceWindowId }),
+    });
   }
 }
 
@@ -540,8 +555,34 @@ async function openLittleArc(url: string, sourceWindowId?: number) {
     littleArcWindowBounds = width === undefined || height === undefined
       ? undefined
       : { width, height, left: littleArcWindow.left, top: littleArcWindow.top };
-    await rememberLittleArcWindow(littleArcWindow.id);
+    await rememberLittleArcWindow(littleArcWindow.id, sourceWindowId);
   }
+}
+
+async function normalWindowForLittleArcPromotion() {
+  if (littleArcSourceWindowId !== undefined) {
+    const sourceWindow = await browser.windows.get(littleArcSourceWindowId).catch(() => undefined);
+    if (sourceWindow?.type === 'normal') return sourceWindow;
+  }
+
+  const [normalWindow] = await browser.windows.getAll({ windowTypes: ['normal'] });
+  return normalWindow;
+}
+
+async function promoteLittleArcToTab(tab?: { id?: number; windowId?: number }) {
+  const littleArcWindow = await storedLittleArcWindowId();
+  if (littleArcWindow === undefined || tab?.id === undefined || tab.windowId !== littleArcWindow) return;
+
+  const targetWindow = await normalWindowForLittleArcPromotion();
+  if (targetWindow?.id === undefined) return;
+
+  // タブを移動すると Little Arc の空ウィンドウは自動的に閉じるため、先に
+  // 記録を消して onRemoved / onFocusChanged から二重に閉じないようにする。
+  await rememberLittleArcWindow(undefined);
+  littleArcWindowBounds = undefined;
+  await browser.tabs.move(tab.id, { windowId: targetWindow.id, index: -1 });
+  await browser.windows.update(targetWindow.id, { focused: true });
+  await browser.tabs.update(tab.id, { active: true });
 }
 
 async function closeLittleArcWindow() {
@@ -586,16 +627,28 @@ async function openPinnedTabOpeningInLittleArc(tabId: number) {
 
 export default defineBackground(() => {
   browser.contextMenus.removeAll()
-    .then(() => browser.contextMenus.create({
-      id: LITTLE_ARC_CONTEXT_MENU_ID,
-      title: 'Little Arc で開く',
-      contexts: ['link'],
-    }))
+    .then(async () => {
+      browser.contextMenus.create({
+        id: LITTLE_ARC_CONTEXT_MENU_ID,
+        title: 'Little Arc で開く',
+        contexts: ['link'],
+      });
+      browser.contextMenus.create({
+        id: PROMOTE_LITTLE_ARC_CONTEXT_MENU_ID,
+        title: '通常のタブに昇格',
+        contexts: ['all'],
+      });
+    })
     .catch(() => undefined);
 
   browser.contextMenus.onClicked.addListener((info, tab) => {
-    if (info.menuItemId !== LITTLE_ARC_CONTEXT_MENU_ID || !info.linkUrl || !isWebUrl(info.linkUrl)) return;
-    void openLittleArc(info.linkUrl, tab?.windowId);
+    if (info.menuItemId === LITTLE_ARC_CONTEXT_MENU_ID && info.linkUrl && isWebUrl(info.linkUrl)) {
+      void openLittleArc(info.linkUrl, tab?.windowId);
+      return;
+    }
+    if (info.menuItemId === PROMOTE_LITTLE_ARC_CONTEXT_MENU_ID) {
+      void promoteLittleArcToTab(tab);
+    }
   });
 
   browser.tabs.onCreated.addListener((tab) => {

@@ -1,5 +1,5 @@
 import type { CommandBarMessage, CommandBarResults, CommandItem } from '@/utils/command-bar';
-import type { LittleArcMessage } from '@/utils/little-arc';
+import type { LittleArcMessage, LittleArcTabStateMessage } from '@/utils/little-arc';
 import {
   COMMAND_BAR_WINDOW_HEIGHT_SCALE,
   COMMAND_BAR_WINDOW_WIDTH_SCALE,
@@ -33,6 +33,15 @@ const COMMAND_BAR_SHORTCUT_REPEAT_GUARD_MS = 250;
 let littleArcWindowId: number | undefined;
 let littleArcWindowBounds: { width: number; height: number; left?: number; top?: number } | undefined;
 let restoringLittleArcBounds = false;
+// 固定タブから target=_blank や ⌘/Ctrl+クリックで生成されたタブを記録する。
+// onCreated 時点では URL が about:blank のことがあるため、URL の確定を待って
+// Little Arc へ差し替える。
+const pendingPinnedTabOpenings = new Map<number, {
+  sourceWindowId: number;
+  url?: string;
+  isPinnedOpener: Promise<boolean>;
+}>();
+const capturingPinnedTabOpenings = new Set<number>();
 
 function titleFor(url: string, title?: string) {
   if (title) return title;
@@ -549,6 +558,32 @@ async function closeLittleArcWhenFocusLost(focusedWindowId: number) {
   if (windowId !== undefined && focusedWindowId !== windowId) await closeLittleArcWindow();
 }
 
+async function openPinnedTabOpeningInLittleArc(tabId: number) {
+  const pending = pendingPinnedTabOpenings.get(tabId);
+  if (!pending || !pending.url || !isWebUrl(pending.url) || capturingPinnedTabOpenings.has(tabId)) return;
+
+  const isPinnedOpener = await pending.isPinnedOpener;
+  // 待機中に別の URL へ遷移した場合は、最新の URL を使う。
+  const latest = pendingPinnedTabOpenings.get(tabId);
+  if (!isPinnedOpener || !latest?.url || !isWebUrl(latest.url) || capturingPinnedTabOpenings.has(tabId)) {
+    if (!isPinnedOpener) pendingPinnedTabOpenings.delete(tabId);
+    return;
+  }
+
+  capturingPinnedTabOpenings.add(tabId);
+  pendingPinnedTabOpenings.delete(tabId);
+  try {
+    // 先に通常タブを閉じることで、そのタブへのフォーカス移動によって既存の
+    // Little Arc が閉じた後でも、新しい Little Arc を確実に表示できる。
+    await browser.tabs.remove(tabId);
+    await openLittleArc(latest.url, latest.sourceWindowId);
+  } catch {
+    // ユーザーが URL 確定前にタブを閉じた場合などは何もしない。
+  } finally {
+    capturingPinnedTabOpenings.delete(tabId);
+  }
+}
+
 export default defineBackground(() => {
   browser.contextMenus.removeAll()
     .then(() => browser.contextMenus.create({
@@ -561,6 +596,34 @@ export default defineBackground(() => {
   browser.contextMenus.onClicked.addListener((info, tab) => {
     if (info.menuItemId !== LITTLE_ARC_CONTEXT_MENU_ID || !info.linkUrl || !isWebUrl(info.linkUrl)) return;
     void openLittleArc(info.linkUrl, tab?.windowId);
+  });
+
+  browser.tabs.onCreated.addListener((tab) => {
+    if (tab.id === undefined || tab.openerTabId === undefined || tab.windowId === undefined) return;
+
+    const isPinnedOpener = browser.tabs.get(tab.openerTabId)
+      .then((opener) => opener.pinned)
+      .catch(() => false);
+    pendingPinnedTabOpenings.set(tab.id, {
+      sourceWindowId: tab.windowId,
+      url: tab.pendingUrl ?? tab.url,
+      isPinnedOpener,
+    });
+    void openPinnedTabOpeningInLittleArc(tab.id);
+  });
+
+  browser.tabs.onUpdated.addListener((tabId, _changeInfo, tab) => {
+    const pending = pendingPinnedTabOpenings.get(tabId);
+    if (!pending) return;
+
+    pending.url = tab.pendingUrl ?? tab.url ?? pending.url;
+    void openPinnedTabOpeningInLittleArc(tabId);
+  });
+
+  browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.pinned === undefined) return;
+    const message: LittleArcTabStateMessage = { type: 'little-arc:tab-pinned-state', pinned: tab.pinned };
+    void browser.tabs.sendMessage(tabId, message).catch(() => undefined);
   });
 
   browser.windows.onFocusChanged.addListener((windowId) => {
@@ -623,6 +686,11 @@ export default defineBackground(() => {
     if (windowId === littleArcWindowId) littleArcWindowBounds = undefined;
   });
 
+  browser.tabs.onRemoved.addListener((tabId) => {
+    pendingPinnedTabOpenings.delete(tabId);
+    capturingPinnedTabOpenings.delete(tabId);
+  });
+
   browser.commands.onCommand.addListener(async (command) => {
     if (command !== 'toggle-command-bar') return;
 
@@ -654,6 +722,8 @@ export default defineBackground(() => {
       case 'little-arc:open':
         await openLittleArc(message.url, sender.tab?.windowId);
         return;
+      case 'little-arc:get-tab-pinned-state':
+        return sender.tab?.pinned === true;
       case 'command-bar:search': return search(
         message.query,
         sender.tab?.id,

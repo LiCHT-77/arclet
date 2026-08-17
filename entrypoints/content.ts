@@ -1,4 +1,4 @@
-import type { LittleArcMessage } from '@/utils/little-arc';
+import type { LittleArcMessage, LittleArcTabStateMessage } from '@/utils/little-arc';
 
 export default defineContentScript({
   matches: ['*://*/*'],
@@ -6,38 +6,66 @@ export default defineContentScript({
     const hostId = 'arclet-command-bar-host';
     const hostStyleId = 'arclet-command-bar-host-style';
     let backdropSheet: CSSStyleSheet | undefined;
+    let isPinnedTab = false;
 
-    const openLittleArcFromClick = (event: MouseEvent) => {
-      if (
-        !event.isTrusted ||
-        event.defaultPrevented ||
-        event.button !== 0 ||
-        !event.shiftKey ||
-        event.altKey ||
-        event.metaKey ||
-        event.ctrlKey ||
-        !(event.target instanceof Element)
-      ) return;
+    // コンテンツスクリプトからは tab.pinned を直接読めないため、起動時に
+    // background から取得する。以降の固定状態変更もメッセージで反映する。
+    void browser.runtime
+      .sendMessage<LittleArcMessage, boolean>({ type: 'little-arc:get-tab-pinned-state' })
+      .then((pinned) => { isPinnedTab = pinned; })
+      .catch(() => undefined);
 
+    const urlForLinkEvent = (event: MouseEvent) => {
+      if (!(event.target instanceof Element)) return undefined;
       const link = event.target.closest('a[href]');
-      if (!link || link.hasAttribute('download')) return;
+      if (!link || link.hasAttribute('download')) return undefined;
 
-      let url: URL;
       try {
-        url = new URL(link.getAttribute('href')!, window.location.href);
+        const url = new URL(link.getAttribute('href')!, window.location.href);
+        return url.protocol === 'http:' || url.protocol === 'https:' ? { link, url } : undefined;
       } catch {
-        return;
+        return undefined;
       }
-      if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+    };
 
+    const openLittleArc = (event: MouseEvent, url: URL) => {
       event.preventDefault();
       event.stopImmediatePropagation();
       const message: LittleArcMessage = { type: 'little-arc:open', url: url.href };
       void browser.runtime.sendMessage(message);
     };
 
+    const openLittleArcFromClick = (event: MouseEvent) => {
+      if (
+        !event.isTrusted ||
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.altKey
+      ) return;
+
+      const target = urlForLinkEvent(event);
+      if (!target) return;
+
+      const isExistingLittleArcShortcut = event.shiftKey && !event.metaKey && !event.ctrlKey;
+      const opensNewTabFromPinnedTab = isPinnedTab && (
+        event.metaKey ||
+        event.ctrlKey ||
+        target.link.getAttribute('target')?.toLowerCase() === '_blank'
+      );
+      if (!isExistingLittleArcShortcut && !opensNewTabFromPinnedTab) return;
+
+      openLittleArc(event, target.url);
+    };
+
+    const openLittleArcFromMiddleClick = (event: MouseEvent) => {
+      if (!event.isTrusted || event.defaultPrevented || event.button !== 1 || !isPinnedTab) return;
+      const target = urlForLinkEvent(event);
+      if (target) openLittleArc(event, target.url);
+    };
+
     // ページのクリックハンドラより先に捕捉し、通常のリンク遷移を抑止する。
     document.addEventListener('click', openLittleArcFromClick, true);
+    document.addEventListener('auxclick', openLittleArcFromMiddleClick, true);
 
     const applyImportantStyles = (element: HTMLElement, styles: Record<string, string>) => {
       for (const [property, value] of Object.entries(styles)) {
@@ -163,7 +191,10 @@ export default defineContentScript({
     document.addEventListener('visibilitychange', closeWhenPageLosesFocus);
 
     browser.runtime.onMessage.addListener((message: unknown) => {
-      const command = message as { type?: string; url?: string };
+      const command = message as { type?: string; url?: string; pinned?: boolean };
+      if (command.type === 'little-arc:tab-pinned-state' && typeof command.pinned === 'boolean') {
+        isPinnedTab = command.pinned;
+      }
       if (command.type === 'command-bar:toggle') toggle();
       if (command.type === 'command-bar:spa-navigate' && command.url) return trySpaNavigation(command.url);
     });

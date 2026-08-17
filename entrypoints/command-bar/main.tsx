@@ -16,7 +16,13 @@ function toNavigableUrl(value: string): string | null {
   if (!input) return null;
 
   try {
-    if (/^https?:\/\//i.test(input)) return new URL(input).href;
+    // ブラウザごとの内部スキームは列挙せず、階層 URL として妥当なら候補にする。
+    // 実際に開けるかどうか（対応していない browser:// 等を含む）はブラウザに委ねる。
+    // スクリプトを実行し得るスキームだけは明示的に除外する。
+    if (/^about:/i.test(input) || /^[a-z][a-z\d+.-]*:\/\//i.test(input)) {
+      const parsed = new URL(input);
+      if (!['javascript:', 'data:', 'vbscript:'].includes(parsed.protocol)) return parsed.href;
+    }
     if (/^(localhost(?::\d+)?|(?:[a-z0-9-]+\.)+[a-z]{2,})(?::\d+)?(?:[/?#].*)?$/i.test(input)) {
       return new URL(`https://${input}`).href;
     }

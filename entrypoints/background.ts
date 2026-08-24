@@ -1,5 +1,5 @@
 import type { CommandBarMessage, CommandBarResults, CommandItem } from '@/utils/command-bar';
-import type { LittleArcMessage, LittleArcTabStateMessage } from '@/utils/little-arc';
+import type { LittleArcMessage } from '@/utils/little-arc';
 import {
   COMMAND_BAR_WINDOW_HEIGHT_SCALE,
   COMMAND_BAR_WINDOW_WIDTH_SCALE,
@@ -18,6 +18,7 @@ const COMMAND_BAR_HEIGHT_TRANSITION_FRAME_MS = 16;
 const INITIAL_COMMAND_BAR_WINDOW_HEIGHT = 240;
 const LITTLE_ARC_CONTEXT_MENU_ID = 'open-link-in-little-arc';
 const PROMOTE_LITTLE_ARC_CONTEXT_MENU_ID = 'promote-little-arc-to-tab';
+const COMMAND_BAR_SEARCH_NAVIGATION_GRACE_MS = 1_500;
 
 let commandBarWindowId: number | undefined;
 // 独立ウィンドウのコマンドバーが操作する、呼び出し元のブラウザウィンドウ。
@@ -36,15 +37,41 @@ let littleArcWindowId: number | undefined;
 let littleArcSourceWindowId: number | undefined;
 let littleArcWindowBounds: { width: number; height: number; left?: number; top?: number } | undefined;
 let restoringLittleArcBounds = false;
-// 固定タブから target=_blank や ⌘/Ctrl+クリックで生成されたタブを記録する。
-// onCreated 時点では URL が about:blank のことがあるため、URL の確定を待って
-// Little Arc へ差し替える。
+// 固定タブ上のリンクまたは window.open で生成されたタブを記録する。
+// tabs.onCreated だけではコマンドバーの検索による新規タブも区別できないため、
+// webNavigation のリンク起点イベントで対象を限定する。
 const pendingPinnedTabOpenings = new Map<number, {
   sourceWindowId: number;
   url?: string;
-  isPinnedOpener: Promise<boolean>;
 }>();
 const capturingPinnedTabOpenings = new Set<number>();
+// browser.search.query は Chromium の実装によっては opener を持つ新規タブと
+// して通知される。コマンドバー起点であることを短時間だけ明示的に記録する。
+const pendingCommandBarSearches = new Map<number, ReturnType<typeof setTimeout>>();
+
+function suppressNextPinnedTabOpeningForCommandBarSearch(tabId: number) {
+  const previousTimer = pendingCommandBarSearches.get(tabId);
+  if (previousTimer !== undefined) clearTimeout(previousTimer);
+
+  const timer = setTimeout(() => {
+    if (pendingCommandBarSearches.get(tabId) === timer) {
+      pendingCommandBarSearches.delete(tabId);
+    }
+  }, COMMAND_BAR_SEARCH_NAVIGATION_GRACE_MS);
+  pendingCommandBarSearches.set(tabId, timer);
+}
+
+async function markCommandBarSearchSource(tab?: { id?: number; windowId?: number }) {
+  let sourceTabId = tab?.id;
+  if (tab?.windowId === commandBarWindowId && commandBarSourceWindowId !== undefined) {
+    const [activeTab] = await browser.tabs.query({ active: true, windowId: commandBarSourceWindowId });
+    sourceTabId = activeTab?.id;
+  }
+  if (sourceTabId === undefined) return;
+
+  const sourceTab = await browser.tabs.get(sourceTabId);
+  if (sourceTab.pinned) suppressNextPinnedTabOpeningForCommandBarSearch(sourceTabId);
+}
 
 function titleFor(url: string, title?: string) {
   if (title) return title;
@@ -603,13 +630,9 @@ async function openPinnedTabOpeningInLittleArc(tabId: number) {
   const pending = pendingPinnedTabOpenings.get(tabId);
   if (!pending || !pending.url || !isWebUrl(pending.url) || capturingPinnedTabOpenings.has(tabId)) return;
 
-  const isPinnedOpener = await pending.isPinnedOpener;
   // 待機中に別の URL へ遷移した場合は、最新の URL を使う。
   const latest = pendingPinnedTabOpenings.get(tabId);
-  if (!isPinnedOpener || !latest?.url || !isWebUrl(latest.url) || capturingPinnedTabOpenings.has(tabId)) {
-    if (!isPinnedOpener) pendingPinnedTabOpenings.delete(tabId);
-    return;
-  }
+  if (!latest?.url || !isWebUrl(latest.url) || capturingPinnedTabOpenings.has(tabId)) return;
 
   capturingPinnedTabOpenings.add(tabId);
   pendingPinnedTabOpenings.delete(tabId);
@@ -651,18 +674,26 @@ export default defineBackground(() => {
     }
   });
 
-  browser.tabs.onCreated.addListener((tab) => {
-    if (tab.id === undefined || tab.openerTabId === undefined || tab.windowId === undefined) return;
+  browser.webNavigation.onCreatedNavigationTarget.addListener((details) => {
+    const searchTimer = pendingCommandBarSearches.get(details.sourceTabId);
+    if (searchTimer !== undefined) {
+      clearTimeout(searchTimer);
+      pendingCommandBarSearches.delete(details.sourceTabId);
+      return;
+    }
 
-    const isPinnedOpener = browser.tabs.get(tab.openerTabId)
-      .then((opener) => opener.pinned)
-      .catch(() => false);
-    pendingPinnedTabOpenings.set(tab.id, {
-      sourceWindowId: tab.windowId,
-      url: tab.pendingUrl ?? tab.url,
-      isPinnedOpener,
-    });
-    void openPinnedTabOpeningInLittleArc(tab.id);
+    void Promise.all([
+      browser.tabs.get(details.sourceTabId),
+      browser.tabs.get(details.tabId),
+    ]).then(([opener, target]) => {
+      if (!opener.pinned || opener.windowId === undefined) return;
+
+      pendingPinnedTabOpenings.set(details.tabId, {
+        sourceWindowId: opener.windowId,
+        url: target.pendingUrl ?? target.url ?? details.url,
+      });
+      void openPinnedTabOpeningInLittleArc(details.tabId);
+    }).catch(() => undefined);
   });
 
   browser.tabs.onUpdated.addListener((tabId, _changeInfo, tab) => {
@@ -671,12 +702,6 @@ export default defineBackground(() => {
 
     pending.url = tab.pendingUrl ?? tab.url ?? pending.url;
     void openPinnedTabOpeningInLittleArc(tabId);
-  });
-
-  browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    if (changeInfo.pinned === undefined) return;
-    const message: LittleArcTabStateMessage = { type: 'little-arc:tab-pinned-state', pinned: tab.pinned };
-    void browser.tabs.sendMessage(tabId, message).catch(() => undefined);
   });
 
   browser.windows.onFocusChanged.addListener((windowId) => {
@@ -775,8 +800,6 @@ export default defineBackground(() => {
       case 'little-arc:open':
         await openLittleArc(message.url, sender.tab?.windowId);
         return;
-      case 'little-arc:get-tab-pinned-state':
-        return sender.tab?.pinned === true;
       case 'command-bar:search': return search(
         message.query,
         sender.tab?.id,
@@ -808,6 +831,7 @@ export default defineBackground(() => {
       case 'command-bar:open-url': await openUrl(message.url); return;
       case 'command-bar:open-url-in-same-domain-tab': await openUrlInSameDomainTab(message.url); return;
       case 'command-bar:web-search':
+        await markCommandBarSearchSource(sender.tab).catch(() => undefined);
         await browser.search.query({ text: message.query, disposition: 'NEW_TAB' });
         return;
       case 'command-bar:resize-window':

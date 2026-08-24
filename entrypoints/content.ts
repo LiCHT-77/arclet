@@ -1,4 +1,4 @@
-import type { LittleArcMessage, LittleArcTabStateMessage } from '@/utils/little-arc';
+import type { LittleArcMessage } from '@/utils/little-arc';
 
 export default defineContentScript({
   matches: ['*://*/*'],
@@ -6,15 +6,6 @@ export default defineContentScript({
     const hostId = 'arclet-command-bar-host';
     const hostStyleId = 'arclet-command-bar-host-style';
     let backdropSheet: CSSStyleSheet | undefined;
-    let isPinnedTab = false;
-
-    // コンテンツスクリプトからは tab.pinned を直接読めないため、起動時に
-    // background から取得する。以降の固定状態変更もメッセージで反映する。
-    void browser.runtime
-      .sendMessage<LittleArcMessage, boolean>({ type: 'little-arc:get-tab-pinned-state' })
-      .then((pinned) => { isPinnedTab = pinned; })
-      .catch(() => undefined);
-
     const urlForLinkEvent = (event: MouseEvent) => {
       if (!(event.target instanceof Element)) return undefined;
       const link = event.target.closest('a[href]');
@@ -47,25 +38,16 @@ export default defineContentScript({
       if (!target) return;
 
       const isExistingLittleArcShortcut = event.shiftKey && !event.metaKey && !event.ctrlKey;
-      const opensNewTabFromPinnedTab = isPinnedTab && (
-        event.metaKey ||
-        event.ctrlKey ||
-        target.link.getAttribute('target')?.toLowerCase() === '_blank'
-      );
-      if (!isExistingLittleArcShortcut && !opensNewTabFromPinnedTab) return;
+      if (!isExistingLittleArcShortcut) return;
 
       openLittleArc(event, target.url);
     };
 
-    const openLittleArcFromMiddleClick = (event: MouseEvent) => {
-      if (!event.isTrusted || event.defaultPrevented || event.button !== 1 || !isPinnedTab) return;
-      const target = urlForLinkEvent(event);
-      if (target) openLittleArc(event, target.url);
-    };
-
-    // ページのクリックハンドラより先に捕捉し、通常のリンク遷移を抑止する。
+    // Shift+クリックの明示的な Little Arc ショートカットだけをページより先に
+    // 捕捉する。固定タブからの新規タブは background で実際のタブ生成を確認して
+    // 処理するため、Slack のようにクリックを同一タブ遷移へ差し替えるページを
+    // 誤って Little Arc 化しない。
     document.addEventListener('click', openLittleArcFromClick, true);
-    document.addEventListener('auxclick', openLittleArcFromMiddleClick, true);
 
     const applyImportantStyles = (element: HTMLElement, styles: Record<string, string>) => {
       for (const [property, value] of Object.entries(styles)) {
@@ -191,10 +173,7 @@ export default defineContentScript({
     document.addEventListener('visibilitychange', closeWhenPageLosesFocus);
 
     browser.runtime.onMessage.addListener((message: unknown) => {
-      const command = message as { type?: string; url?: string; pinned?: boolean };
-      if (command.type === 'little-arc:tab-pinned-state' && typeof command.pinned === 'boolean') {
-        isPinnedTab = command.pinned;
-      }
+      const command = message as { type?: string; url?: string };
       if (command.type === 'command-bar:toggle') toggle();
       if (command.type === 'command-bar:spa-navigate' && command.url) return trySpaNavigation(command.url);
     });

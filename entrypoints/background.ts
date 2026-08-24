@@ -770,6 +770,12 @@ export default defineBackground(() => {
   });
 
   browser.commands.onCommand.addListener(async (command) => {
+    if (command === 'promote-little-arc-to-tab') {
+      const [activeTab] = await browser.tabs.query({ active: true, lastFocusedWindow: true });
+      await promoteLittleArcToTab(activeTab);
+      return;
+    }
+
     if (command !== 'toggle-command-bar') return;
 
     // commands API はキーリピートも個別のコマンドとして通知する。押下中の

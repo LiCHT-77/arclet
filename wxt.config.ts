@@ -14,6 +14,13 @@ export default defineConfig({
         },
         description: 'コマンドバーを開く／閉じる',
       },
+      'promote-little-arc-to-tab': {
+        suggested_key: {
+          default: 'Ctrl+Shift+L',
+          mac: 'Command+Shift+L',
+        },
+        description: 'Little Arc を通常のタブに昇格',
+      },
     },
     host_permissions: ['*://*/*'],
     web_accessible_resources: [

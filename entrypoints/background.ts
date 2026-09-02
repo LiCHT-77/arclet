@@ -134,24 +134,66 @@ function withoutDuplicateHistoryPages(items: CommandItem[]) {
   });
 }
 
+function historyDomain(url: string) {
+  try {
+    // www の有無で同じサイトの履歴が分散しないようにする。
+    return new URL(url).hostname.replace(/^www\./i, '');
+  } catch {
+    return undefined;
+  }
+}
+
+function isHistoryRootUrl(url: string) {
+  try {
+    const pageUrl = new URL(url);
+    return pageUrl.pathname === '/' && !pageUrl.search && !pageUrl.hash;
+  } catch {
+    return false;
+  }
+}
+
 function limitHistoryResultsPerDomain(items: CommandItem[]) {
   const result: CommandItem[] = [];
   const countsByDomain = new Map<string, number>();
+  const shortestItemByDomain = new Map<string, CommandItem>();
+  const selectedItems = new Set<CommandItem>();
 
   for (const item of items) {
-    let domain: string;
-    try {
-      // www の有無で同じサイトの履歴が分散しないようにする。
-      domain = new URL(item.url).hostname.replace(/^www\./i, '');
-    } catch {
+    const domain = historyDomain(item.url);
+    if (domain === undefined) continue;
+
+    const currentShortest = shortestItemByDomain.get(domain);
+    if (
+      currentShortest === undefined
+      || (isHistoryRootUrl(item.url) && !isHistoryRootUrl(currentShortest.url))
+      || (isHistoryRootUrl(item.url) === isHistoryRootUrl(currentShortest.url) && item.url.length < currentShortest.url.length)
+    ) {
+      shortestItemByDomain.set(domain, item);
+    }
+  }
+
+  for (const item of items) {
+    const domain = historyDomain(item.url);
+    if (domain === undefined) {
       result.push(item);
       continue;
     }
 
-    const count = countsByDomain.get(domain) ?? 0;
-    if (count >= MAX_HISTORY_RESULTS_PER_DOMAIN) continue;
+    const shortestItem = shortestItemByDomain.get(domain);
+    let count = countsByDomain.get(domain) ?? 0;
+
+    // 同一ドメインの1件目には最短URL（存在すればルートURL）を置く。
+    if (count === 0 && shortestItem !== undefined) {
+      result.push(shortestItem);
+      selectedItems.add(shortestItem);
+      countsByDomain.set(domain, 1);
+      count = 1;
+    }
+
+    if (selectedItems.has(item) || count >= MAX_HISTORY_RESULTS_PER_DOMAIN) continue;
 
     countsByDomain.set(domain, count + 1);
+    selectedItems.add(item);
     result.push(item);
   }
 

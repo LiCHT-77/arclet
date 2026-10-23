@@ -924,6 +924,11 @@ export default defineBackground(() => {
         await markCommandBarSearchSource(sender.tab).catch(() => undefined);
         await browser.search.query({ text: message.query, disposition: 'NEW_TAB' });
         return;
+      case 'command-bar:open-search-url':
+        await markCommandBarSearchSource(sender.tab).catch(() => undefined);
+        // 検索結果は毎回新しいページなので、openUrl の既存タブ再利用は通さない。
+        await browser.tabs.create({ url: message.url, active: true });
+        return;
       case 'command-bar:resize-window':
         await resizeCommandBarWindow(message.contentHeight, message.frameHeight, message.immediate);
         return;

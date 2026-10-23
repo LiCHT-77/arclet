@@ -3,6 +3,13 @@ import { createRoot } from 'react-dom/client';
 import { Command } from 'cmdk';
 import { Bookmark, Command as CommandIcon, ExternalLink, Globe, History, PanelsTopLeft, Search } from 'lucide-react';
 import type { CommandBarMessage, CommandBarResults, CommandItem } from '@/utils/command-bar';
+import {
+  loadSearchEngines,
+  matchSearchEngine,
+  searchEngineFaviconUrl,
+  searchUrlFrom,
+  type SearchEngine,
+} from '@/utils/search-engines';
 import { COMMAND_BAR_WINDOW_WIDTH_SCALE } from '@/utils/window-layout';
 import './style.css';
 
@@ -47,15 +54,15 @@ function Icon({ kind, className }: { kind: CommandItem['kind'] | 'url' | 'search
   return <IconComponent className={`size-5 shrink-0 stroke-2 text-slate-500 dark:text-slate-300${className ? ` ${className}` : ''}`} aria-hidden="true" />;
 }
 
-function Favicon({ item }: { item: CommandItem }) {
+function Favicon({ src, className = 'size-5' }: { src?: string; className?: string }) {
   const [failed, setFailed] = useState(false);
 
-  if (!item.faviconUrl || failed) return <Globe className="size-5 shrink-0 stroke-2 text-slate-500 dark:text-slate-300" aria-hidden="true" />;
+  if (!src || failed) return <Globe className={`${className} shrink-0 stroke-2 text-slate-500 dark:text-slate-300`} aria-hidden="true" />;
 
   return (
     <img
-      className="size-5 shrink-0 object-contain"
-      src={item.faviconUrl}
+      className={`${className} shrink-0 object-contain`}
+      src={src}
       alt=""
       onError={() => setFailed(true)}
     />
@@ -75,7 +82,7 @@ function ResultItem({ item, onSelect, showTabNumber }: { item: CommandItem; onSe
       value={item.id}
       onSelect={() => onSelect(item)}
     >
-      <Favicon item={item} />
+      <Favicon src={item.faviconUrl} />
       <span className="grid min-w-0 flex-1 gap-1">
         <span className="flex items-center gap-2 truncate text-sm"><span className="truncate">{item.title}</span></span>
         <span className="truncate text-xs text-slate-500 dark:text-slate-300">{item.subtitle ?? item.url}</span>
@@ -107,21 +114,37 @@ function App() {
   const [isWindowVisible, setIsWindowVisible] = useState(false);
   const [initialResultsLoaded, setInitialResultsLoaded] = useState(false);
   const [isMetaKeyPressed, setIsMetaKeyPressed] = useState(false);
+  const [engines, setEngines] = useState<SearchEngine[]>([]);
+  const [activeEngine, setActiveEngine] = useState<SearchEngine>();
   const initialResultsLoadedRef = useRef(false);
   const windowVisibleRef = useRef(false);
-  const navigableUrl = useMemo(() => toNavigableUrl(query), [query]);
+  const trimmedQuery = query.trim();
+  const navigableUrl = useMemo(() => (activeEngine ? null : toNavigableUrl(query)), [activeEngine, query]);
+  // 1 語を打っている間だけ、Tab で切り替えられるエンジンを示す。
+  const hintEngine = useMemo(() => (
+    activeEngine || navigableUrl || !/^\S+$/.test(trimmedQuery)
+      ? undefined
+      : matchSearchEngine(engines, trimmedQuery)
+  ), [activeEngine, engines, navigableUrl, trimmedQuery]);
   const selectedItem = useMemo(() => (
     [...results.tabs, ...results.bookmarks, ...results.history]
       .find((item) => item.id === selectedValue)
   ), [results, selectedValue]);
-  const selectableValues = useMemo(() => [
+  const selectableValues = useMemo(() => (activeEngine ? [
+    ...(trimmedQuery ? [`engine-search:${trimmedQuery}`] : []),
+    ...results.searchSuggestions.map((suggestion) => `suggestion:${suggestion}`),
+  ] : [
     ...results.tabs.map((item) => item.id),
     ...results.bookmarks.map((item) => item.id),
     ...(navigableUrl ? [`url:${navigableUrl}`] : []),
-    ...(query.trim() ? [`search:${query.trim()}`] : []),
+    ...(trimmedQuery ? [`search:${trimmedQuery}`] : []),
     ...results.searchSuggestions.map((suggestion) => `suggestion:${suggestion}`),
     ...results.history.map((item) => item.id),
-  ], [navigableUrl, query, results]);
+  ]), [activeEngine, navigableUrl, results, trimmedQuery]);
+
+  useEffect(() => {
+    void loadSearchEngines().then(setEngines);
+  }, []);
 
   const close = () => {
     if (window.parent === window) {
@@ -255,7 +278,8 @@ function App() {
 
       if (event.key === 'Escape') {
         event.preventDefault();
-        close();
+        if (activeEngine) setActiveEngine(undefined);
+        else close();
         return;
       }
 
@@ -293,7 +317,7 @@ function App() {
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', resetMetaKey);
     };
-  }, [selectedItem]);
+  }, [activeEngine, selectedItem]);
 
   const run = async (message: CommandBarMessage) => {
     try {
@@ -302,6 +326,17 @@ function App() {
     } catch {
       // The host page can disappear while an action is being processed.
     }
+  };
+
+  const activateEngine = (engine: SearchEngine) => {
+    setActiveEngine(engine);
+    setQuery('');
+    inputRef.current?.focus({ preventScroll: true });
+  };
+
+  const runEngineSearch = (text: string) => {
+    const url = activeEngine && searchUrlFrom(activeEngine.urlTemplate, text);
+    if (url) void run({ type: 'command-bar:open-search-url', url });
   };
 
   const selectItem = (item: CommandItem) => {
@@ -343,6 +378,21 @@ function App() {
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [isStandaloneWindow]);
 
+  const suggestionItems = results.searchSuggestions.map((suggestion) => (
+    <Command.Item
+      className="flex min-h-14 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 data-[selected=true]:bg-indigo-50 dark:data-[selected=true]:bg-slate-700"
+      key={suggestion}
+      value={`suggestion:${suggestion}`}
+      onSelect={() => {
+        if (activeEngine) runEngineSearch(suggestion);
+        else void run({ type: 'command-bar:web-search', query: suggestion });
+      }}
+    >
+      {activeEngine ? <Favicon src={searchEngineFaviconUrl(activeEngine)} /> : <Icon kind="search" />}
+      <span className="grid min-w-0 flex-1 gap-1"><span className="truncate text-sm">{suggestion}</span><span className="truncate text-xs text-slate-500 dark:text-slate-300">{activeEngine ? `${activeEngine.name} で検索` : '検索候補'}</span></span>
+    </Command.Item>
+  ));
+
   return (
     <main
       className={`bg-transparent font-sans ${isStandaloneWindow ? 'block w-full' : 'flex min-h-dvh w-dvw items-start justify-center px-5 pt-24 pb-5'}`}
@@ -360,38 +410,68 @@ function App() {
       >
         <div ref={commandContentRef}>
           <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-4 dark:border-slate-700">
-            <Search className="size-5 shrink-0 stroke-2 text-slate-500 dark:text-slate-300" aria-hidden="true" />
+            {activeEngine
+              ? <span className="flex shrink-0 items-center gap-1.5 rounded-md bg-indigo-50 px-2 py-1 text-sm font-medium text-indigo-700 dark:bg-indigo-400/10 dark:text-indigo-200">
+                <Favicon src={searchEngineFaviconUrl(activeEngine)} className="size-4" />
+                <span>{activeEngine.name}</span>
+              </span>
+              : <Search className="size-5 shrink-0 stroke-2 text-slate-500 dark:text-slate-300" aria-hidden="true" />}
             <Command.Input
               className="w-full min-w-0 border-0 bg-transparent text-base outline-none placeholder:text-slate-500 dark:placeholder:text-slate-300"
               ref={inputRef}
               autoFocus
               value={query}
               onValueChange={setQuery}
-              placeholder="タブ、ブックマーク、履歴を検索"
+              onKeyDown={(event) => {
+                if (event.key === 'Tab' && hintEngine) {
+                  event.preventDefault();
+                  activateEngine(hintEngine);
+                  return;
+                }
+                if (event.key === 'Backspace' && !query && activeEngine) {
+                  event.preventDefault();
+                  setActiveEngine(undefined);
+                }
+              }}
+              placeholder={activeEngine ? `${activeEngine.name} で検索` : 'タブ、ブックマーク、履歴を検索'}
             />
-            <kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs text-slate-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300">Esc</kbd>
+            {hintEngine
+              ? <button
+                className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-slate-200 px-1.5 py-1 text-xs text-slate-500 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+                type="button"
+                onClick={() => activateEngine(hintEngine)}
+              >
+                <kbd className="rounded border border-slate-200 bg-slate-100 px-1 font-mono dark:border-slate-600 dark:bg-slate-800">Tab</kbd>
+                <span>{hintEngine.name} で検索</span>
+              </button>
+              : <kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs text-slate-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300">Esc</kbd>}
           </div>
           <Command.List className="max-h-96 overflow-auto p-2">
-            <Command.Empty className="p-7 text-center text-slate-500 dark:text-slate-300">候補が見つかりません</Command.Empty>
+            <Command.Empty className="p-7 text-center text-slate-500 dark:text-slate-300">{activeEngine ? `${activeEngine.name} で検索する語を入力` : '候補が見つかりません'}</Command.Empty>
+            {activeEngine ? <>
+            {trimmedQuery && (
+              <Command.Item className="flex min-h-14 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 data-[selected=true]:bg-indigo-50 dark:data-[selected=true]:bg-slate-700" value={`engine-search:${trimmedQuery}`} onSelect={() => runEngineSearch(trimmedQuery)}>
+                <Favicon src={searchEngineFaviconUrl(activeEngine)} /><span className="grid min-w-0 flex-1 gap-1"><span className="truncate text-sm">「{trimmedQuery}」を検索</span><span className="truncate text-xs text-slate-500 dark:text-slate-300">{activeEngine.name}</span></span>
+              </Command.Item>
+            )}
+            {suggestionItems}
+            </> : <>
             {[...results.tabs, ...results.bookmarks].map((item) => <ResultItem key={item.id} item={item} onSelect={selectItem} showTabNumber={isMetaKeyPressed} />)}
             {navigableUrl && (
               <Command.Item className="flex min-h-14 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 data-[selected=true]:bg-indigo-50 dark:data-[selected=true]:bg-slate-700" value={`url:${navigableUrl}`} onSelect={() => void run({ type: 'command-bar:open-url', url: navigableUrl })}>
                 <Icon kind="url" /><span className="grid min-w-0 flex-1 gap-1"><span className="truncate text-sm">{navigableUrl} を開く</span><span className="truncate text-xs text-slate-500 dark:text-slate-300">新規タブまたは既存のタブへ移動</span></span>
               </Command.Item>
             )}
-            {query.trim() && (
-              <Command.Item className="flex min-h-14 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 data-[selected=true]:bg-indigo-50 dark:data-[selected=true]:bg-slate-700" value={`search:${query.trim()}`} onSelect={() => void run({ type: 'command-bar:web-search', query: query.trim() })}>
-                <Icon kind="search" /><span className="grid min-w-0 flex-1 gap-1"><span className="truncate text-sm">「{query.trim()}」を検索</span><span className="truncate text-xs text-slate-500 dark:text-slate-300">ブラウザの既定検索エンジンを使用</span></span>
+            {trimmedQuery && (
+              <Command.Item className="flex min-h-14 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 data-[selected=true]:bg-indigo-50 dark:data-[selected=true]:bg-slate-700" value={`search:${trimmedQuery}`} onSelect={() => void run({ type: 'command-bar:web-search', query: trimmedQuery })}>
+                <Icon kind="search" /><span className="grid min-w-0 flex-1 gap-1"><span className="truncate text-sm">「{trimmedQuery}」を検索</span><span className="truncate text-xs text-slate-500 dark:text-slate-300">ブラウザの既定検索エンジンを使用</span></span>
               </Command.Item>
             )}
-            {results.searchSuggestions.map((suggestion) => (
-              <Command.Item className="flex min-h-14 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 data-[selected=true]:bg-indigo-50 dark:data-[selected=true]:bg-slate-700" key={suggestion} value={`suggestion:${suggestion}`} onSelect={() => void run({ type: 'command-bar:web-search', query: suggestion })}>
-                <Icon kind="search" /><span className="grid min-w-0 flex-1 gap-1"><span className="truncate text-sm">{suggestion}</span><span className="truncate text-xs text-slate-500 dark:text-slate-300">検索候補</span></span>
-              </Command.Item>
-            ))}
+            {suggestionItems}
             {results.history.map((item) => <ResultItem key={item.id} item={item} onSelect={selectItem} showTabNumber={isMetaKeyPressed} />)}
+            </>}
           </Command.List>
-          <footer className="flex gap-4 border-t border-slate-200 px-4 py-2.5 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-300"><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↑↓</kbd> 移動</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↵</kbd> 開く</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">Ctrl</kbd><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">X</kbd> タブを閉じる</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">⌘</kbd><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↵</kbd> 同一ドメインのタブで開く</span></footer>
+          <footer className="flex gap-4 border-t border-slate-200 px-4 py-2.5 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-300"><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↑↓</kbd> 移動</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">{activeEngine ? '⌫' : 'Tab'}</kbd> {activeEngine ? '検索エンジンを解除' : '検索エンジンを指定'}</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↵</kbd> 開く</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">Ctrl</kbd><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">X</kbd> タブを閉じる</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">⌘</kbd><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↵</kbd> 同一ドメインのタブで開く</span></footer>
         </div>
       </Command>
     </main>

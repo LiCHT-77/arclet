@@ -34,7 +34,7 @@ function issuesFor(rows: Row[]): Map<number, string> {
     if (!row.name.trim()) issues.set(row.rowId, '名前を入力してください。');
     else if (!keyword) issues.set(row.rowId, 'ショートカットを入力してください。');
     else if ((keywordCounts.get(keyword) ?? 0) > 1) issues.set(row.rowId, `ショートカット「${keyword}」が重複しています。`);
-    else if (!searchUrlFrom(row.urlTemplate, 'q')) issues.set(row.rowId, 'URL に %s を含む http(s) の URL を入力してください。');
+    else if (!searchUrlFrom(row.urlTemplate, 'q')) issues.set(row.rowId, 'URL に %s を含む有効な URL を入力してください。');
   }
 
   return issues;
@@ -92,6 +92,9 @@ export default function SearchEnginesPage() {
         <h1 className="text-xl font-bold">検索エンジン</h1>
         <p className="mt-2 text-sm leading-relaxed text-slate-600">
           コマンドバーでショートカットを入力して Tab を押すと、そのエンジンでの検索に切り替わります。URL の <code className="rounded bg-slate-100 px-1 font-mono">%s</code> が検索語に置き換わります。
+        </p>
+        <p className="mt-1 text-sm leading-relaxed text-slate-600">
+          <code className="rounded bg-slate-100 px-1 font-mono">obsidian://search?query=%s</code> のようなアプリのスキームも使えます。javascript: などスクリプトを実行するスキームだけは受け付けません。
         </p>
       </header>
 

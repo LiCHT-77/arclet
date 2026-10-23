@@ -21,6 +21,9 @@ export function normalizeKeyword(value: string): string {
   return value.trim().toLocaleLowerCase().replace(/\s+/g, '');
 }
 
+// テンプレートに埋め込んだスクリプトが検索語を引数に実行されるのを防ぐ。
+const UNSAFE_PROTOCOLS = ['javascript:', 'data:', 'vbscript:', 'blob:', 'filesystem:'];
+
 /** URL テンプレートの `%s` と Chrome の `{searchTerms}` の両方を置換する。 */
 export function searchUrlFrom(urlTemplate: string, query: string): string | null {
   const template = urlTemplate.trim();
@@ -28,7 +31,7 @@ export function searchUrlFrom(urlTemplate: string, query: string): string | null
 
   try {
     const url = new URL(template.replace(/%s|\{searchTerms\}/g, encodeURIComponent(query)));
-    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
+    return UNSAFE_PROTOCOLS.includes(url.protocol) ? null : url.href;
   } catch {
     return null;
   }
@@ -37,7 +40,10 @@ export function searchUrlFrom(urlTemplate: string, query: string): string | null
 export function searchEngineOrigin(engine: SearchEngine): string | null {
   const url = searchUrlFrom(engine.urlTemplate, 'q');
   if (!url) return null;
-  return new URL(url).origin;
+
+  // http(s) 以外のスキームは origin を持たず "null" 文字列になる。
+  const { origin } = new URL(url);
+  return origin === 'null' ? null : origin;
 }
 
 export function searchEngineFaviconUrl(engine: SearchEngine): string | undefined {

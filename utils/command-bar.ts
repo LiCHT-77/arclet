@@ -11,6 +11,8 @@ export interface CommandItem {
   windowId?: number;
   /** ブラウザウィンドウ内でのタブ位置（1 始まり）。 */
   tabNumber?: number;
+  /** tabs.discard でメモリ解放済みかどうか（タブ種別のみ）。 */
+  discarded?: boolean;
 }
 
 export interface CommandBarResults {
@@ -25,6 +27,7 @@ export type CommandBarMessage =
   | { type: 'command-bar:activate-tab'; tabId: number; windowId: number }
   | { type: 'command-bar:activate-tab-shortcut'; shortcutNumber: number }
   | { type: 'command-bar:close-tab'; tabId: number }
+  | { type: 'command-bar:discard-tab'; tabId: number }
   | { type: 'command-bar:open-url'; url: string }
   | { type: 'command-bar:open-url-in-same-domain-tab'; url: string }
   | { type: 'command-bar:web-search'; query: string }

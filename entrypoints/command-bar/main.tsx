@@ -88,6 +88,11 @@ function ResultItem({ item, onSelect, showTabNumber }: { item: CommandItem; onSe
         <span className="truncate text-xs text-slate-500 dark:text-slate-300">{item.subtitle ?? item.url}</span>
       </span>
       <span className="flex shrink-0 items-center gap-1 text-xs text-slate-500 dark:text-slate-300" aria-label={sourceLabel[item.kind]} title={sourceLabel[item.kind]}>
+        {item.kind === 'tab' && item.discarded && (
+          <span className="rounded-md border border-slate-200 bg-slate-100 px-1.5 py-0.5 font-medium text-slate-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300" aria-label="破棄済みタブ" title="メモリ解放済み">
+            破棄済み
+          </span>
+        )}
         {item.kind === 'tab' && showTabNumber && item.tabNumber !== undefined
           ? <span className="flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 font-medium text-indigo-700 dark:border-indigo-400/40 dark:bg-indigo-400/10 dark:text-indigo-200" aria-label={`⌘${item.tabNumber} でタブへ移動`}>
             <CommandIcon className="size-3.5 stroke-2" aria-hidden="true" />
@@ -304,6 +309,32 @@ function App() {
             // タブがすでに閉じられているなど、削除に失敗した場合は候補を維持する。
           });
       }
+
+      if (
+        event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        event.key.toLocaleLowerCase() === 'd' &&
+        selectedItem?.kind === 'tab' &&
+        selectedItem.tabId !== undefined &&
+        !selectedItem.discarded
+      ) {
+        event.preventDefault();
+        void browser.runtime
+          .sendMessage<CommandBarMessage, boolean>({ type: 'command-bar:discard-tab', tabId: selectedItem.tabId })
+          .then((discarded) => {
+            if (!discarded) return;
+            setResults((current) => ({
+              ...current,
+              tabs: current.tabs.map((item) =>
+                item.tabId === selectedItem.tabId ? { ...item, discarded: true } : item,
+              ),
+            }));
+          })
+          .catch(() => {
+            // 破棄に失敗した場合は候補を維持する。
+          });
+      }
     };
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.key === 'Meta') setIsMetaKeyPressed(false);
@@ -471,7 +502,7 @@ function App() {
             {results.history.map((item) => <ResultItem key={item.id} item={item} onSelect={selectItem} showTabNumber={isMetaKeyPressed} />)}
             </>}
           </Command.List>
-          <footer className="flex gap-4 border-t border-slate-200 px-4 py-2.5 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-300"><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↑↓</kbd> 移動</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">{activeEngine ? '⌫' : 'Tab'}</kbd> {activeEngine ? '検索エンジンを解除' : '検索エンジンを指定'}</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↵</kbd> 開く</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">Ctrl</kbd><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">X</kbd> タブを閉じる</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">⌘</kbd><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↵</kbd> 同一ドメインのタブで開く</span></footer>
+          <footer className="flex gap-4 border-t border-slate-200 px-4 py-2.5 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-300"><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↑↓</kbd> 移動</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">{activeEngine ? '⌫' : 'Tab'}</kbd> {activeEngine ? '検索エンジンを解除' : '検索エンジンを指定'}</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↵</kbd> 開く</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">Ctrl</kbd><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">X</kbd> タブを閉じる</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">Ctrl</kbd><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">D</kbd> タブを破棄</span><span className="flex items-center gap-1"><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">⌘</kbd><kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800">↵</kbd> 同一ドメインのタブで開く</span></footer>
         </div>
       </Command>
     </main>

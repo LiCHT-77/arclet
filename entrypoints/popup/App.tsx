@@ -10,6 +10,13 @@ function App() {
         <p className="text-xs leading-relaxed text-slate-500">ブラウザの拡張機能設定にある「キーボード ショートカット」から変更できます。</p>
       </section>
       <p className="mx-1 mt-4 text-xs leading-relaxed text-slate-500">初期設定は ⌘⇧K（Windows / Linux では Ctrl + Shift + K）です。</p>
+      <button
+        className="mt-4 w-full cursor-pointer rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-100"
+        type="button"
+        onClick={() => void browser.runtime.openOptionsPage()}
+      >
+        検索エンジンを設定
+      </button>
     </main>
   );
 }

@@ -266,6 +266,7 @@ async function search(query: string, excludedTabId?: number, excludedUrl?: strin
       faviconUrl: faviconUrlFor(tab.url!),
       tabId: tab.id!,
       windowId: tab.windowId!,
+      discarded: tab.discarded,
       // Chromium の ⌘1〜⌘8 は先頭から、⌘9 は最後のタブを指す。
       // 独立ウィンドウでは、呼び出し元以外のウィンドウにショートカットを
       // 表示しても移動先が曖昧になるため番号を出さない。
@@ -351,6 +352,14 @@ async function openUrlInSameDomainTab(url: string) {
   }
 
   await openUrl(normalizedUrl);
+}
+
+async function discardTab(tabId: number): Promise<boolean> {
+  const tab = await browser.tabs.get(tabId).catch(() => undefined);
+  // 既に破棄済み、またはアクティブなタブは破棄できない。
+  if (!tab || tab.discarded || tab.active) return false;
+  const discardedTab = await browser.tabs.discard(tabId).catch(() => undefined);
+  return discardedTab?.id !== undefined;
 }
 
 async function closeCommandBarWindow() {
@@ -918,6 +927,8 @@ export default defineBackground(() => {
       case 'command-bar:close-tab':
         await browser.tabs.remove(message.tabId);
         return;
+      case 'command-bar:discard-tab':
+        return discardTab(message.tabId);
       case 'command-bar:open-url': await openUrl(message.url); return;
       case 'command-bar:open-url-in-same-domain-tab': await openUrlInSameDomainTab(message.url); return;
       case 'command-bar:web-search':

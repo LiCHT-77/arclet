@@ -175,6 +175,7 @@ export default defineContentScript({
     browser.runtime.onMessage.addListener((message: unknown) => {
       const command = message as { type?: string; url?: string };
       if (command.type === 'command-bar:toggle') toggle();
+      if (command.type === 'command-bar:close') close();
       if (command.type === 'command-bar:spa-navigate' && command.url) return trySpaNavigation(command.url);
     });
   },

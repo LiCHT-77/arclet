@@ -33,6 +33,9 @@ let commandBarWindowHeightTransitionId = 0;
 let transitioningCommandBarWindowHeight = false;
 let lastCommandBarShortcutAt = 0;
 const COMMAND_BAR_SHORTCUT_REPEAT_GUARD_MS = 250;
+// DevTools ページは、対応する DevTools が開いている間だけ接続を維持する。
+// 同じタブを検査する DevTools が複数存在しても正しく扱えるよう参照数を持つ。
+const devToolsOpenCountsByTabId = new Map<number, number>();
 let littleArcWindowId: number | undefined;
 let littleArcSourceWindowId: number | undefined;
 let littleArcWindowBounds: { width: number; height: number; left?: number; top?: number } | undefined;
@@ -691,6 +694,39 @@ async function openPinnedTabOpeningInLittleArc(tabId: number) {
 }
 
 export default defineBackground(() => {
+  browser.runtime.onConnect.addListener((port) => {
+    if (port.name !== 'arclet-devtools') return;
+
+    let inspectedTabId: number | undefined;
+    port.onMessage.addListener((message: unknown) => {
+      if (
+        inspectedTabId !== undefined ||
+        typeof message !== 'object' ||
+        message === null ||
+        !('type' in message) ||
+        message.type !== 'devtools:connected' ||
+        !('tabId' in message) ||
+        typeof message.tabId !== 'number'
+      ) return;
+
+      inspectedTabId = message.tabId;
+      devToolsOpenCountsByTabId.set(
+        inspectedTabId,
+        (devToolsOpenCountsByTabId.get(inspectedTabId) ?? 0) + 1,
+      );
+      // DevTools を開く前から iframe 版が表示されていた場合も、以降は
+      // window 版だけが残るよう明示的に閉じる。
+      void browser.tabs.sendMessage(inspectedTabId, { type: 'command-bar:close' }).catch(() => undefined);
+    });
+
+    port.onDisconnect.addListener(() => {
+      if (inspectedTabId === undefined) return;
+      const nextCount = (devToolsOpenCountsByTabId.get(inspectedTabId) ?? 1) - 1;
+      if (nextCount > 0) devToolsOpenCountsByTabId.set(inspectedTabId, nextCount);
+      else devToolsOpenCountsByTabId.delete(inspectedTabId);
+    });
+  });
+
   browser.contextMenus.removeAll()
     .then(async () => {
       browser.contextMenus.create({
@@ -809,6 +845,7 @@ export default defineBackground(() => {
   browser.tabs.onRemoved.addListener((tabId) => {
     pendingPinnedTabOpenings.delete(tabId);
     capturingPinnedTabOpenings.delete(tabId);
+    devToolsOpenCountsByTabId.delete(tabId);
   });
 
   browser.commands.onCommand.addListener(async (command) => {
@@ -832,6 +869,11 @@ export default defineBackground(() => {
     const [activeTab] = await browser.tabs.query({ active: true, lastFocusedWindow: true });
     if (activeTab?.id === undefined) {
       await openCommandBarWindow(activeTab?.windowId);
+      return;
+    }
+    if (devToolsOpenCountsByTabId.has(activeTab.id)) {
+      await browser.tabs.sendMessage(activeTab.id, { type: 'command-bar:close' }).catch(() => undefined);
+      await openCommandBarWindow(activeTab.windowId);
       return;
     }
     try {
